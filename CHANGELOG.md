@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.5
+
+- Fix class-coloured names briefly reverting to the native colour on mouseover.
+  A secure post-hook reapplies selective colour in the same native name update.
+- Remove the prototype command aliases; `/sfn` is the only addon command.
+- Remove French documentation; ship the English README in the installable ZIP.
+- Use English for all addon messages, help text and descriptions.
+
 ## 0.1.4
 
 - First public release as **Smart Friendly Nameplates**.

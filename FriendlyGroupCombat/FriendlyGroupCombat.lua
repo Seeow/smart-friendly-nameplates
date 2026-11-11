@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: MIT
 -- WoW Forever 1.60.1. No dependency; only ordinary, accessible nameplates.
 local ADDON_NAME = ...
-local VERSION = "0.1.4"
+local VERSION = "0.1.5"
 local PREFIX = "|cff66ccffSmart Friendly Nameplates:|r "
 local INTERVAL = 0.20
 local CVARS = {
@@ -19,6 +19,7 @@ local warnings = {}
 local pendingCVars = false
 local elapsedSinceUpdate = 0
 local lastError
+local nameHookInstalled = false
 
 local function Say(message)
     print(PREFIX .. message)
@@ -78,7 +79,7 @@ local function RestoreNameColor(name)
             local color = saved.before
             local ok = pcall(name.SetVertexColor, name, color[1], color[2], color[3], color[4])
             if not ok then
-                Warn("color", "Le client refuse de restaurer une couleur de nom.")
+                Warn("color", "The client refused to restore a name colour.")
                 return
             end
         end
@@ -113,7 +114,7 @@ local function RestoreFrame(frame)
             if Accessible(piece) then
                 local ok = pcall(piece.SetAlpha, piece, alpha)
                 if not ok then
-                    Warn("nameOnly", "Le client refuse de restaurer un element visuel. /sfn status pour le diagnostic.")
+                    Warn("nameOnly", "The client refused to restore a visual element. Use /sfn status for diagnostics.")
                     return
                 end
             end
@@ -166,6 +167,31 @@ local function ShouldShowNameOnly(unit)
     return party == false and raid == false and combat == false
 end
 
+local function InstallNameHook()
+    if nameHookInstalled then return end
+    if type(hooksecurefunc) ~= "function" or type(CompactUnitFrame_UpdateName) ~= "function" then return end
+    -- Blizzard recolours names on mouseover, target and health/name updates.
+    -- A secure POST-hook reapplies our visual colour in the same update, before
+    -- rendering. Never call/replace its Lua updater or write its state fields.
+    local ok = pcall(hooksecurefunc, "CompactUnitFrame_UpdateName", function(frame)
+        if not db or not db.enabled or not nameOnlyFrames[frame] then return end
+        if not Accessible(frame) or not frame.unit or not frame.name then return end
+        local recoloured = pcall(function()
+            -- Re-check the live unit: pooled frames may already represent a
+            -- different player/NPC before our removal event is delivered.
+            if ShouldShowNameOnly(frame.unit) then
+                ColorName(frame.name, frame.unit)
+            else
+                RestoreNameColor(frame.name)
+            end
+        end)
+        if not recoloured then
+            Warn("colorHook", "The client refused to resynchronise a name colour.")
+        end
+    end)
+    nameHookInstalled = ok
+end
+
 local function UpdatePlate(unit)
     local record = plates[unit]
     if not record or record.failed or not Accessible(record.plate) then return end
@@ -182,8 +208,8 @@ local function UpdatePlate(unit)
         if not ok then
             RestoreFrame(frame)
             record.failed = true -- Do not retry a failing operation every 0.2 s.
-            local detail = (issecretvalue and issecretvalue(err)) and "erreur protegee" or tostring(err)
-            Warn("nameOnly", "Filtre suspendu pour cette barre : " .. detail)
+            local detail = (issecretvalue and issecretvalue(err)) and "protected error" or tostring(err)
+            Warn("nameOnly", "Filtering paused for this nameplate: " .. detail)
         end
     else
         RestoreFrame(frame)
@@ -232,7 +258,7 @@ local function WriteValue(name, value)
     local ok, result = pcall(C_CVar.SetCVar, name, value)
     local actual = GetValue(name)
     if not ok or result == false or actual ~= value then
-        Warn(name, "Impossible de regler " .. name .. ". Verifie /sfn status hors combat.")
+        Warn(name, "Could not change " .. name .. ". Check /sfn status out of combat.")
         return false
     end
     return true
@@ -269,7 +295,7 @@ local function ApplyCVars()
                 end
             end
         elseif wanted then
-            Warn(name, "Reglage absent sur ce client : " .. name .. ".")
+            Warn(name, "Setting unavailable on this client: " .. name .. ".")
         end
     end
 end
@@ -282,43 +308,41 @@ end
 
 local function Status()
     local version, build, _, interface = GetBuildInfo()
-    Say("v" .. VERSION .. " | filtre " .. (db.enabled and "actif" or "inactif")
+    Say("v" .. VERSION .. " | filter " .. (db.enabled and "enabled" or "disabled")
         .. " | client " .. version .. " (" .. build .. "), interface " .. interface)
-    Say("Barres suivies : " .. Count(plates) .. " ; nom seul : " .. Count(nameOnlyFrames)
-        .. " ; verrouillees signalees : " .. Count(forbidden) .. ".")
-    Say("Couleur de classe sur les noms seuls : " .. (db.classColorsOnly and "oui" or "non") .. ".")
+    Say("Tracked nameplates: " .. Count(plates) .. "; name only: " .. Count(nameOnlyFrames)
+        .. "; protected nameplates reported: " .. Count(forbidden) .. ".")
+    Say("Class colours on name-only players: " .. (db.classColorsOnly and "yes" or "no") .. ".")
     for _, setting in ipairs(CVARS) do
         local value = GetValue(setting.name)
-        Say(setting.name .. " = " .. tostring(value or "indisponible"))
+        Say(setting.name .. " = " .. tostring(value or "unavailable"))
     end
-    if pendingCVars then Say("Reglages en attente : quitte le combat, puis /sfn on ou /sfn off.") end
-    if lastError then Say("Dernier probleme : " .. lastError) end
-    Say("Les barres amicales verrouillees en donjon/raid restent celles de Blizzard.")
+    if pendingCVars then Say("Pending settings: leave combat, then use /sfn on or /sfn off if needed.") end
+    if lastError then Say("Last issue: " .. lastError) end
+    Say("Protected friendly nameplates in dungeons/raids remain under Blizzard's control.")
 end
 
 local function DescribeFlag(fn, ...)
     local value = Flag(fn, ...)
-    if value == nil then return "indisponible" end
-    return value and "oui" or "non"
+    if value == nil then return "unavailable" end
+    return value and "yes" or "no"
 end
 
 local function DebugTarget()
     if Flag(UnitExists, "target") ~= true then
-        Say("Cible un joueur amical, puis /sfn debug.")
+        Say("Target a friendly player, then use /sfn debug.")
         return
     end
-    Say("Cible : joueur=" .. DescribeFlag(UnitIsPlayer, "target")
-        .. ", amical=" .. DescribeFlag(UnitIsFriend, "player", "target")
-        .. ", groupe=" .. DescribeFlag(UnitInParty, "target")
+    Say("Target: player=" .. DescribeFlag(UnitIsPlayer, "target")
+        .. ", friendly=" .. DescribeFlag(UnitIsFriend, "player", "target")
+        .. ", party=" .. DescribeFlag(UnitInParty, "target")
         .. ", raid=" .. DescribeFlag(UnitInRaid, "target")
-        .. ", son combat=" .. DescribeFlag(UnitAffectingCombat, "target") .. ".")
-    Say("Decision pour la cible : " .. (ShouldShowNameOnly("target") and "nom seul" or "affichage normal")
-        .. " (si une barre accessible existe).")
+        .. ", their combat=" .. DescribeFlag(UnitAffectingCombat, "target") .. ".")
+    Say("Target display: " .. (ShouldShowNameOnly("target") and "name only" or "normal display")
+        .. " (when an accessible nameplate exists).")
 end
 
 SLASH_FRIENDLYGROUPCOMBAT1 = "/sfn"
-SLASH_FRIENDLYGROUPCOMBAT2 = "/bgc"
-SLASH_FRIENDLYGROUPCOMBAT3 = "/fgc"
 SlashCmdList.FRIENDLYGROUPCOMBAT = function(input)
     if not db then return end
     local command, argument = (input or ""):lower():match("^%s*(%S*)%s*(%S*)")
@@ -327,9 +351,9 @@ SlashCmdList.FRIENDLYGROUPCOMBAT = function(input)
         if not db.enabled then RestoreAll() end
         ApplyCVars()
         UpdateAll()
-        Say(db.enabled and "Filtre actif : groupe/raid OU combat de chaque joueur."
-            or "Filtre desactive ; restauration des reglages precedents.")
-        if pendingCVars then Say("La modification des reglages attend la fin du combat.") end
+        Say(db.enabled and "Filter enabled: party/raid OR each player's own combat."
+            or "Filter disabled; restoring previous settings.")
+        if pendingCVars then Say("Game-setting changes will wait until combat ends.") end
     elseif command == "colors" and (argument == "on" or argument == "off") then
         db.classColorsOnly = argument == "on"
         if not db.classColorsOnly then
@@ -337,27 +361,30 @@ SlashCmdList.FRIENDLYGROUPCOMBAT = function(input)
         end
         ApplyCVars()
         UpdateAll()
-        Say(db.classColorsOnly and "Couleur de classe uniquement sur les noms seuls."
-            or "Couleurs natives restaurees.")
+        Say(db.classColorsOnly and "Class colours enabled only for name-only players."
+            or "Native colours restored.")
     elseif command == "status" then
         Status()
     elseif command == "debug" then
         DebugTarget()
     else
-        Say("/sfn on | off | status | debug | colors on | colors off. Actif par defaut.")
+        Say("/sfn on | off | status | debug | colors on | colors off. Enabled by default.")
     end
 end
 
 driver:SetScript("OnEvent", function(_, event, unit)
     if event == "ADDON_LOADED" then
-        if unit ~= ADDON_NAME then return end
-        FriendlyGroupCombatDB = type(FriendlyGroupCombatDB) == "table" and FriendlyGroupCombatDB or {}
-        db = FriendlyGroupCombatDB
-        if type(db.enabled) ~= "boolean" then db.enabled = true end
-        if type(db.classColorsOnly) ~= "boolean" then db.classColorsOnly = true end
-        if type(db.originalCVars) ~= "table" then db.originalCVars = {} end
-        driver:UnregisterEvent("ADDON_LOADED")
+        if unit == ADDON_NAME then
+            FriendlyGroupCombatDB = type(FriendlyGroupCombatDB) == "table" and FriendlyGroupCombatDB or {}
+            db = FriendlyGroupCombatDB
+            if type(db.enabled) ~= "boolean" then db.enabled = true end
+            if type(db.classColorsOnly) ~= "boolean" then db.classColorsOnly = true end
+            if type(db.originalCVars) ~= "table" then db.originalCVars = {} end
+        end
+        InstallNameHook()
+        if db and nameHookInstalled then driver:UnregisterEvent("ADDON_LOADED") end
     elseif event == "PLAYER_ENTERING_WORLD" then
+        InstallNameHook()
         ApplyCVars()
         ScanPlates()
     elseif event == "PLAYER_REGEN_ENABLED" then

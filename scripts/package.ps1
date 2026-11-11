@@ -18,7 +18,7 @@ $archivePath = Join-Path $outputRoot "SmartFriendlyNameplates-$version.zip"
 $files = @(
     @{ Source = Join-Path $addonRoot "$addonName.toc"; Name = "$addonName/$addonName.toc" },
     @{ Source = Join-Path $addonRoot "$addonName.lua"; Name = "$addonName/$addonName.lua" },
-    @{ Source = Join-Path $addonRoot 'LISEZ-MOI.md'; Name = "$addonName/LISEZ-MOI.md" },
+    @{ Source = Join-Path $projectRoot 'README.md'; Name = "$addonName/README.md" },
     @{ Source = Join-Path $projectRoot 'LICENSE'; Name = "$addonName/LICENSE" }
 )
 foreach ($file in $files) {

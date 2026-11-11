@@ -13,9 +13,9 @@ local function equal(actual, expected, message)
         .. ": expected " .. tostring(expected) .. ", got " .. tostring(actual))
 end
 
-local function Context(previous)
+local function Context(previous, options)
     local ctx = {
-        units = {}, plates = {}, messages = {}, combat = false, writes = {},
+        units = {}, plates = {}, messages = {}, combat = false, writes = {}, nameHooks = {},
         cvars = previous and previous.cvars or {
             nameplateShowFriendlyPlayers = "0",
             nameplateShowOnlyNameForFriendlyPlayerUnits = "0",
@@ -55,6 +55,15 @@ local function Context(previous)
     env.UnitAffectingCombat = function(unit) return ReadUnit(unit, "combat") end
     env.UnitClassBase = function(unit) return ReadUnit(unit, "class") end
     env.RAID_CLASS_COLORS = { MAGE = { r = 0.25, g = 0.78, b = 0.92 } }
+    ctx.nativeNameUpdater = function(frame) frame.name:SetVertexColor(1, 1, 1, 1) end
+    if not (options and options.lateNameUpdater) then
+        env.CompactUnitFrame_UpdateName = ctx.nativeNameUpdater
+    end
+    env.hooksecurefunc = function(name, callback)
+        equal(name, "CompactUnitFrame_UpdateName")
+        assert(type(env[name]) == "function", "native updater is not loaded")
+        ctx.nameHooks[#ctx.nameHooks + 1] = callback
+    end
     env.C_CVar = {
         GetCVar = function(name) return ctx.cvars[name] end,
         SetCVar = function(name, value)
@@ -99,6 +108,10 @@ local function Context(previous)
     end
     function ctx:command(command)
         env.SlashCmdList.FRIENDLYGROUPCOMBAT(command)
+    end
+    function ctx:nativeNameUpdate(frame)
+        env.CompactUnitFrame_UpdateName(frame)
+        for _, callback in ipairs(self.nameHooks) do callback(frame) end
     end
     function ctx:nativeRefresh(frame)
         local unit = ctx.units[frame.unit]
@@ -459,7 +472,7 @@ test("debug output tolerates secret target values", function()
     local ctx = Context()
     ctx:unit("target", { combat = SECRET, raid = API_ERROR })
     ctx:command("debug")
-    assert(ctx.messages[1]:find("indisponible", 1, true))
+    assert(ctx.messages[1]:find("unavailable", 1, true))
 end)
 
 test("Blizzard refresh while filtered is reconciled without hiding the name", function()
@@ -644,11 +657,104 @@ test("frame reuse for an enemy restores the name colour", function()
     equal(BarVisible(frame), 1)
 end)
 
-test("public command retains both prototype aliases", function()
+test("only the public command is registered", function()
     local ctx = Context()
     equal(ctx.env.SLASH_FRIENDLYGROUPCOMBAT1, "/sfn")
-    equal(ctx.env.SLASH_FRIENDLYGROUPCOMBAT2, "/bgc")
-    equal(ctx.env.SLASH_FRIENDLYGROUPCOMBAT3, "/fgc")
+    equal(ctx.env.SLASH_FRIENDLYGROUPCOMBAT2, nil)
+    equal(ctx.env.SLASH_FRIENDLYGROUPCOMBAT3, nil)
+end)
+
+test("mouseover colour refresh is corrected synchronously without a polling tick", function()
+    local ctx = Context()
+    local _, frame = ctx:unit("nameplate1", { class = "MAGE" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    for _ = 1, 3 do
+        ctx:nativeNameUpdate(frame)
+        equal(frame.name.vertexColor[1], 0.25)
+        equal(frame.name.vertexColor[2], 0.78)
+        equal(BarVisible(frame), 0)
+    end
+    equal(#ctx.messages, 0)
+    equal(ctx.env.CompactUnitFrame_UpdateName, ctx.nativeNameUpdater)
+end)
+
+test("hovering an NPC does not recolour it or flash other filtered player names", function()
+    local ctx = Context()
+    local _, player = ctx:unit("nameplate1", { class = "MAGE" })
+    local _, npc = ctx:unit("nameplate2", { player = false, class = "MAGE" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+    ctx:nativeNameUpdate(npc)
+    ctx:nativeNameUpdate(player)
+    equal(npc.name.vertexColor[1], 1)
+    equal(npc.name.vertexColor[2], 1)
+    equal(player.name.vertexColor[1], 0.25)
+    equal(npc.changes, 0)
+end)
+
+test("post-hook leaves full bars alone and stops after disabling colours or filter", function()
+    local ctx = Context()
+    local _, player = ctx:unit("nameplate1", { class = "MAGE" })
+    local _, party = ctx:unit("nameplate2", { class = "MAGE", party = true })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+    ctx:nativeNameUpdate(party)
+    equal(party.name.vertexColor[1], 1)
+    ctx:command("colors off")
+    ctx:nativeNameUpdate(player)
+    equal(player.name.vertexColor[1], 1)
+    ctx:command("colors on")
+    ctx:command("off")
+    ctx:nativeNameUpdate(player)
+    equal(player.name.vertexColor[1], 1)
+end)
+
+test("post-hook rechecks live identity when a pooled frame becomes an NPC", function()
+    local ctx = Context()
+    local unit, frame = ctx:unit("nameplate1", { class = "MAGE" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    unit.player = false
+    ctx:nativeNameUpdate(frame)
+    equal(frame.name.vertexColor[1], 1)
+    equal(frame.name.vertexColor[2], 1)
+end)
+
+test("post-hook tolerates secret class data and never writes native frame state", function()
+    local ctx = Context()
+    local unit, frame, plate = ctx:unit("nameplate1", { class = "MAGE" })
+    local proxy = setmetatable({}, {
+        __index = frame,
+        __newindex = function(_, key) error("tainting native field: " .. key) end,
+    })
+    plate.UnitFrame = proxy
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:nativeNameUpdate(proxy)
+    equal(frame.name.vertexColor[1], 0.25)
+    unit.class = SECRET
+    ctx:nativeNameUpdate(proxy)
+    equal(frame.name.vertexColor[1], 1)
+    equal(frame.showOnlyName, false)
+    equal(frame.nativeHealthValue, SECRET)
+    equal(#ctx.messages, 0)
+end)
+
+test("late-loaded native updater installs one hook and preserves existing settings", function()
+    local ctx = Context(nil, { lateNameUpdater = true })
+    equal(#ctx.nameHooks, 0)
+    ctx:command("colors off")
+    ctx.env.CompactUnitFrame_UpdateName = ctx.nativeNameUpdater
+    ctx:emit("ADDON_LOADED", "Blizzard_UnitFrame")
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    equal(#ctx.nameHooks, 1)
+    equal(ctx.env.FriendlyGroupCombatDB.classColorsOnly, false)
+end)
+
+test("post-hook does not inspect untracked forbidden frames", function()
+    local ctx = Context()
+    equal(#ctx.nameHooks, 1)
+    local forbidden = setmetatable({}, { __index = function() error("forbidden frame inspected") end })
+    ctx.nameHooks[1](forbidden)
 end)
 
 print(string.format("%d/%d integration checks passed", passed, tests))

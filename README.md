@@ -3,8 +3,6 @@
 A lightweight, standalone **World of Warcraft: Forever** addon that keeps
 Blizzard's friendly player health bars for the players you want to see.
 
-[Documentation en français](FriendlyGroupCombat/LISEZ-MOI.md)
-
 ## How it works
 
 | Friendly player | Display |
@@ -28,7 +26,8 @@ game engine's native 3D overhead names.
   remain under Blizzard's control. Per-player filtering and colouring cannot
   be applied to those frames.
 - Other WoW clients and nameplate addons are not currently supported.
-- In-game messages are currently in French; commands are listed below.
+- Addon text is in English. Names and other text supplied by Blizzard follow
+  the game's language settings.
 
 ## Install
 
@@ -62,8 +61,6 @@ users keep their enabled/disabled settings; use `/sfn on` if needed.
 | `/sfn status` | Show version, settings and diagnostic information |
 | `/sfn debug` | Inspect group/combat information for your current target |
 
-The earlier `/bgc` and `/fgc` commands remain available as aliases.
-
 Turn the filter off with `/sfn off` **out of combat before uninstalling**. An
 addon that is no longer loaded cannot restore game settings.
 
@@ -76,14 +73,18 @@ Previous values are saved per character, including across `/reload`.
 
 - Game-setting changes requested during combat wait until combat ends.
 - Other players' combat and group changes are checked about every 0.2 seconds.
+- Name colours are reapplied immediately after Blizzard updates names, including
+  when hovering players or NPCs, so the periodic check does not cause a colour flash.
 - Unknown or secret group/combat information leaves the full nameplate visible.
 - Unknown or secret class/colour information leaves the native colour intact.
 - Hidden health bars can still occupy stacking space and retain their normal
   click area. Native name-display, distance and simplified-style rules apply.
 - Avoid other addons that also change friendly nameplate visibility or opacity.
 
-Only visual C API methods are used to filter plates and colour text. The addon
-does not read health values or modify Blizzard's Lua health/layout state.
+Only visual C API methods are used to filter plates and colour text. A secure
+post-hook keeps colours in sync after native name updates. The addon does not
+read health values, call/replace Blizzard's name updater, or modify its Lua
+health/layout state.
 Automated checks simulate the event loop; actual client restrictions and visual
 behaviour still require in-game testing.
 
