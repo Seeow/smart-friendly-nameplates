@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: Smart Friendly Nameplates
+## Notes: Show friendly player health bars for your party/raid or players in combat; names only for everyone else. /sfn
+## Notes-frFR: Barres pour le groupe/raid ou les joueurs amicaux en combat, nom seul pour les autres. /sfn
+## Author: Seeow
+## Version: 0.1.4
+## SavedVariablesPerCharacter: FriendlyGroupCombatDB
+
+FriendlyGroupCombat.lua
