@@ -3,6 +3,7 @@
 ## Notes: Filter friendly player and minion health bars by group or combat. Configure with /sfn.
 ## Author: Seeow
 ## Version: 0.1.10
+## X-Curse-Project-ID: 1798982
 ## SavedVariablesPerCharacter: FriendlyGroupCombatDB
 
 FriendlyGroupCombat.lua

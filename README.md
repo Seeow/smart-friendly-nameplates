@@ -161,6 +161,11 @@ pwsh -File scripts/package.ps1
 The archive is written to `dist/` and contains the correctly named addon folder
 and the MIT licence. Build output and local test tools are not committed.
 
+CurseForge's native packager is configured through `.pkgmeta` for project
+**1798982**. See [Releasing](docs/RELEASING.md) for the one-time webhook setup,
+version/tag checks and the release process. The webhook connection is configured
+separately; normal CI packaging runs never upload a release.
+
 For bug reports, include the client version, zone/instance type, `/sfn status`,
 and the first Lua error if present. Target the affected player and use
 `/sfn debug` to inspect their group/combat state.

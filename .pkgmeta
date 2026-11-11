@@ -1,0 +1,19 @@
+package-as: FriendlyGroupCombat
+enable-nolib-creation: no
+
+# Lift the existing addon directory into the package root. Root README and
+# LICENSE files remain alongside the TOC, without a second wrapper directory.
+move-folders:
+  FriendlyGroupCombat/FriendlyGroupCombat: FriendlyGroupCombat
+
+ignore:
+  - docs
+  - scripts
+  - tests
+  - dist
+  - node_modules
+  - CHANGELOG.md
+
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
