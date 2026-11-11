@@ -1,13 +1,25 @@
 -- SPDX-License-Identifier: MIT
 -- WoW Forever 1.60.1. No dependency; only ordinary, accessible nameplates.
-local ADDON_NAME = ...
-local VERSION = "0.1.5"
+local ADDON_NAME, addon = ...
+local VERSION = "0.1.10"
+addon.VERSION = VERSION
+local DEFAULTS = {
+    enabled = true,
+    classColorsOnly = true,
+    showGroup = true,
+    showCombat = true,
+    showTarget = false,
+    includeMinions = false,
+    showGuild = false,
+}
+addon.DEFAULTS = DEFAULTS
 local PREFIX = "|cff66ccffSmart Friendly Nameplates:|r "
 local INTERVAL = 0.20
 local CVARS = {
     { name = "nameplateShowFriendlyPlayers", value = "1" },
     { name = "nameplateShowOnlyNameForFriendlyPlayerUnits", value = "0" },
     { name = "nameplateUseClassColorForFriendlyPlayerUnitNames", value = "0", option = "classColorsOnly" },
+    { name = "nameplateShowFriendlyPlayerMinions", value = "1", option = "includeMinions" },
 }
 
 local driver = CreateFrame("Frame")
@@ -15,6 +27,7 @@ local db
 local plates, forbidden = {}, {}
 local nameOnlyFrames = setmetatable({}, { __mode = "k" })
 local nameColors = setmetatable({}, { __mode = "k" })
+local guildLabels = setmetatable({}, { __mode = "k" })
 local warnings = {}
 local pendingCVars = false
 local elapsedSinceUpdate = 0
@@ -88,7 +101,7 @@ local function RestoreNameColor(name)
 end
 
 local function ColorName(name, unit)
-    if not db.classColorsOnly then return RestoreNameColor(name) end
+    if not db.classColorsOnly or Flag(UnitIsPlayer, unit) ~= true then return RestoreNameColor(name) end
     local class, known = Read(UnitClassBase, unit)
     local color = known and type(class) == "string" and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
     if not color then return RestoreNameColor(name) end
@@ -105,8 +118,50 @@ local function ColorName(name, unit)
     name:SetVertexColor(saved.applied[1], saved.applied[2], saved.applied[3], saved.applied[4])
 end
 
+local function HideGuild(frame)
+    local label = guildLabels[frame]
+    if Accessible(label) then
+        local ok = pcall(function() label:SetText(""); label:Hide() end)
+        if not ok then Warn("guild", "The client refused to hide a guild label.") end
+    end
+end
+
+local function ShowGuild(frame, unit)
+    if not db.showGuild or Flag(UnitIsPlayer, unit) ~= true then return HideGuild(frame) end
+    -- The guild text is a sibling region, so it must follow native name
+    -- visibility explicitly rather than displaying a guild with no name.
+    if Flag(frame.name.IsShown, frame.name) ~= true then return HideGuild(frame) end
+    local guild, known = Read(GetGuildInfo, unit)
+    if not known or type(guild) ~= "string" or guild == "" then return HideGuild(frame) end
+    local label = guildLabels[frame]
+    if not label then
+        label = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        guildLabels[frame] = label
+        label:SetTextColor(0.7, 0.85, 0.7)
+        label:SetWordWrap(false)
+    end
+    local justify = Read(frame.name.GetJustifyH, frame.name)
+    local edge = justify == "LEFT" and "LEFT" or (justify == "RIGHT" and "RIGHT" or "")
+    label:ClearAllPoints()
+    label:SetPoint("TOP" .. edge, frame.name, "BOTTOM" .. edge, 0, -2)
+    label:SetText("<" .. guild .. ">")
+    label:Show()
+end
+
+local function RestoreNameVisuals(frame)
+    if frame.name then
+        RestoreNameColor(frame.name)
+    end
+    HideGuild(frame)
+end
+
+local function UpdateNameVisuals(frame, unit)
+    ColorName(frame.name, unit)
+    ShowGuild(frame, unit)
+end
+
 local function RestoreFrame(frame)
-    if Accessible(frame) and frame.name then RestoreNameColor(frame.name) end
+    if Accessible(frame) then RestoreNameVisuals(frame) end
     local before = nameOnlyFrames[frame]
     if not before then return end
     if Accessible(frame) then
@@ -132,9 +187,10 @@ local function ShowNameOnly(frame, unit)
     end
     -- Only call C-backed visual methods. Calling Blizzard's Lua layout or
     -- SetShowOnlyName helpers taints fields later read by health calculations.
-    -- Keep ALL addon bookkeeping outside Blizzard frames and never read health.
+    -- Keep ALL addon bookkeeping outside Blizzard frames. Never read native
+    -- health-bar state or pass health values through Blizzard's Lua helpers.
     local function Fade(piece)
-        if piece == frame.name or not Accessible(piece) then return end
+        if piece == frame.name or piece == guildLabels[frame] or not Accessible(piece) then return end
         if before[piece] == nil then
             local alpha, known = Read(piece.GetAlpha, piece)
             if not known or type(alpha) ~= "number" then return end
@@ -144,27 +200,64 @@ local function ShowNameOnly(frame, unit)
     end
     for _, child in ipairs({ frame:GetChildren() }) do Fade(child) end
     for _, region in ipairs({ frame:GetRegions() }) do Fade(region) end
-    ColorName(frame.name, unit)
+    UpdateNameVisuals(frame, unit)
 end
 
 local function RestoreAll()
     for frame in pairs(nameOnlyFrames) do RestoreFrame(frame) end
 end
 
+local function MinionInGroup(unit)
+    local party = Flag(UnitPlayerOrPetInParty, unit)
+    local raid = Flag(UnitPlayerOrPetInRaid, unit)
+    if party == true or raid == true then return true end
+    -- Pet membership helpers do not identify every guardian or totem. For
+    -- those, check the group's owners without relying on names or GUIDs.
+    local grouped = Flag(IsInGroup)
+    if grouped == false then return false end
+    if grouped == nil then return end
+    local inRaid = Flag(IsInRaid)
+    local count, known = Read(GetNumGroupMembers)
+    if inRaid == nil or not known or type(count) ~= "number" or count < 1 or count > 40 then return end
+    local unknown = false
+    for index = 1, count do
+        local owner = inRaid and ("raid" .. index) or (index == 1 and "player" or "party" .. (index - 1))
+        local owned = Flag(UnitIsOwnerOrControllerOfUnit, owner, unit)
+        if owned == true then return true end
+        if owned == nil then unknown = true end
+    end
+    if unknown then return end
+    return false
+end
+
 local function ShouldShowNameOnly(unit)
     if not db or not db.enabled then return false end
     if Flag(UnitExists, unit) ~= true then return false end
-    if Flag(UnitIsPlayer, unit) ~= true then return false end
     if Flag(UnitIsFriend, "player", unit) ~= true then return false end
     -- Never change the personal resource display, even in a party.
     if Flag(UnitIsUnit, unit, "player") ~= false then return false end
 
-    local party = Flag(UnitInParty, unit)
-    local raid = Flag(UnitInRaid, unit)
-    local combat = Flag(UnitAffectingCombat, unit)
-    if party == true or raid == true or combat == true then return false end
-    -- Unknown/restricted data: leave the plate visible rather than guess.
-    return party == false and raid == false and combat == false
+    local player = Flag(UnitIsPlayer, unit)
+    if player ~= true then
+        if player ~= false or not db.includeMinions or Flag(UnitIsMinion, unit) ~= true then return false end
+    end
+
+    if db.showTarget and Flag(UnitIsUnit, unit, "target") ~= false then return false end
+
+    -- Enabled rules are ORed. Only consult active rules: a disabled criterion
+    -- must not keep bars visible merely because its data is restricted.
+    if db.showGroup then
+        if player then
+            local party = Flag(UnitInParty, unit)
+            local raid = Flag(UnitInRaid, unit)
+            if party ~= false or raid ~= false then return false end
+        elseif MinionInGroup(unit) ~= false then
+            -- Unknown/restricted data: leave the bar visible rather than guess.
+            return false
+        end
+    end
+    if db.showCombat and Flag(UnitAffectingCombat, unit) ~= false then return false end
+    return true
 end
 
 local function InstallNameHook()
@@ -180,9 +273,9 @@ local function InstallNameHook()
             -- Re-check the live unit: pooled frames may already represent a
             -- different player/NPC before our removal event is delivered.
             if ShouldShowNameOnly(frame.unit) then
-                ColorName(frame.name, frame.unit)
+                UpdateNameVisuals(frame, frame.unit)
             else
-                RestoreNameColor(frame.name)
+                RestoreNameVisuals(frame)
             end
         end)
         if not recoloured then
@@ -264,12 +357,17 @@ local function WriteValue(name, value)
     return true
 end
 
+local function RefreshOptions()
+    if addon.RefreshOptions then addon.RefreshOptions() end
+end
+
 -- Keep originals across /reload. /sfn off restores only settings still at the
 -- value we applied, so later manual changes are respected. Never write in combat.
 local function ApplyCVars()
     if not db then return end
     if InCombatLockdown() then
         pendingCVars = true
+        RefreshOptions()
         return
     end
     pendingCVars = false
@@ -298,6 +396,27 @@ local function ApplyCVars()
             Warn(name, "Setting unavailable on this client: " .. name .. ".")
         end
     end
+    RefreshOptions()
+end
+
+-- Both the options panel and slash commands use the same update path.
+local function SetOption(key, value)
+    if not db then return end
+    if DEFAULTS[key] == nil then return end
+    if type(value) ~= "boolean" then return end
+    db[key] = value
+    if not db.enabled then RestoreAll() end
+    if not db.classColorsOnly then
+        for name in pairs(nameColors) do RestoreNameColor(name) end
+    end
+    ApplyCVars()
+    UpdateAll()
+end
+
+addon.SetOption = SetOption
+addon.GetOptions = function()
+    if not db then return end
+    return db, pendingCVars
 end
 
 local function Count(entries)
@@ -313,6 +432,11 @@ local function Status()
     Say("Tracked nameplates: " .. Count(plates) .. "; name only: " .. Count(nameOnlyFrames)
         .. "; protected nameplates reported: " .. Count(forbidden) .. ".")
     Say("Class colours on name-only players: " .. (db.classColorsOnly and "yes" or "no") .. ".")
+    Say("Guild labels on name-only players: " .. (db.showGuild and "yes" or "no") .. ".")
+    Say("Show bars: group=" .. (db.showGroup and "yes" or "no")
+        .. ", in combat=" .. (db.showCombat and "yes" or "no")
+        .. ", current target=" .. (db.showTarget and "yes" or "no")
+        .. "; include minions=" .. (db.includeMinions and "yes" or "no") .. ".")
     for _, setting in ipairs(CVARS) do
         local value = GetValue(setting.name)
         Say(setting.name .. " = " .. tostring(value or "unavailable"))
@@ -330,45 +454,49 @@ end
 
 local function DebugTarget()
     if Flag(UnitExists, "target") ~= true then
-        Say("Target a friendly player, then use /sfn debug.")
+        Say("Target a friendly player or minion, then use /sfn debug.")
         return
     end
     Say("Target: player=" .. DescribeFlag(UnitIsPlayer, "target")
         .. ", friendly=" .. DescribeFlag(UnitIsFriend, "player", "target")
         .. ", party=" .. DescribeFlag(UnitInParty, "target")
         .. ", raid=" .. DescribeFlag(UnitInRaid, "target")
+        .. ", minion=" .. DescribeFlag(UnitIsMinion, "target")
+        .. ", player/pet in party=" .. DescribeFlag(UnitPlayerOrPetInParty, "target")
+        .. ", player/pet in raid=" .. DescribeFlag(UnitPlayerOrPetInRaid, "target")
         .. ", their combat=" .. DescribeFlag(UnitAffectingCombat, "target") .. ".")
     Say("Target display: " .. (ShouldShowNameOnly("target") and "name only" or "normal display")
         .. " (when an accessible nameplate exists).")
 end
+
+addon.PrintStatus = Status
+addon.DebugTarget = DebugTarget
 
 SLASH_FRIENDLYGROUPCOMBAT1 = "/sfn"
 SlashCmdList.FRIENDLYGROUPCOMBAT = function(input)
     if not db then return end
     local command, argument = (input or ""):lower():match("^%s*(%S*)%s*(%S*)")
     if command == "on" or command == "off" then
-        db.enabled = command == "on"
-        if not db.enabled then RestoreAll() end
-        ApplyCVars()
-        UpdateAll()
-        Say(db.enabled and "Filter enabled: party/raid OR each player's own combat."
+        SetOption("enabled", command == "on")
+        Say(db.enabled and "Filter enabled. Configure visibility rules in /sfn options."
             or "Filter disabled; restoring previous settings.")
         if pendingCVars then Say("Game-setting changes will wait until combat ends.") end
     elseif command == "colors" and (argument == "on" or argument == "off") then
-        db.classColorsOnly = argument == "on"
-        if not db.classColorsOnly then
-            for name in pairs(nameColors) do RestoreNameColor(name) end
-        end
-        ApplyCVars()
-        UpdateAll()
+        SetOption("classColorsOnly", argument == "on")
         Say(db.classColorsOnly and "Class colours enabled only for name-only players."
             or "Native colours restored.")
     elseif command == "status" then
         Status()
     elseif command == "debug" then
         DebugTarget()
+    elseif command == "" or command == "options" then
+        if InCombatLockdown() then
+            Say("Open Options > Add-ons after leaving combat.")
+        elseif not addon.OpenOptions or not addon.OpenOptions() then
+            Say("Find Smart Friendly Nameplates in Options > Add-ons.")
+        end
     else
-        Say("/sfn on | off | status | debug | colors on | colors off. Enabled by default.")
+        Say("/sfn opens options. Commands: on | off | status | debug | colors on | colors off. Enabled by default.")
     end
 end
 
@@ -377,13 +505,17 @@ driver:SetScript("OnEvent", function(_, event, unit)
         if unit == ADDON_NAME then
             FriendlyGroupCombatDB = type(FriendlyGroupCombatDB) == "table" and FriendlyGroupCombatDB or {}
             db = FriendlyGroupCombatDB
-            if type(db.enabled) ~= "boolean" then db.enabled = true end
-            if type(db.classColorsOnly) ~= "boolean" then db.classColorsOnly = true end
+            db.nameWidthPercent = nil -- Remove the retired experimental setting.
+            for key, value in pairs(DEFAULTS) do
+                if type(db[key]) ~= type(value) then db[key] = value end
+            end
             if type(db.originalCVars) ~= "table" then db.originalCVars = {} end
+            addon.RegisterOptions()
         end
         InstallNameHook()
         if db and nameHookInstalled then driver:UnregisterEvent("ADDON_LOADED") end
     elseif event == "PLAYER_ENTERING_WORLD" then
+        addon.RegisterOptions()
         InstallNameHook()
         ApplyCVars()
         ScanPlates()
@@ -397,7 +529,7 @@ driver:SetScript("OnEvent", function(_, event, unit)
     elseif event == "FORBIDDEN_NAME_PLATE_UNIT_ADDED" then
         RemovePlate(unit)
         forbidden[unit] = true -- No request for the forbidden frame, even for diagnostics.
-    elseif event == "UNIT_FLAGS" or event == "UNIT_FACTION" then
+    elseif event == "UNIT_FLAGS" or event == "UNIT_FACTION" or event == "UNIT_NAME_UPDATE" then
         if plates[unit] then UpdatePlate(unit) else UpdateAll() end
     else
         UpdateAll()
@@ -418,6 +550,7 @@ for _, event in ipairs({
     "NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED",
     "FORBIDDEN_NAME_PLATE_UNIT_ADDED", "FORBIDDEN_NAME_PLATE_UNIT_REMOVED",
     "GROUP_ROSTER_UPDATE", "UNIT_FLAGS", "UNIT_FACTION", "PLAYER_TARGET_CHANGED",
+    "UNIT_PET", "UNIT_NAME_UPDATE", "PLAYER_GUILD_UPDATE",
 }) do
     driver:RegisterEvent(event)
 end

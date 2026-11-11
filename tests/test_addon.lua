@@ -1,5 +1,5 @@
 -- Integration checks with a simulated WoW event loop. Lua 5.1+ / Fengari.
-local source = "FriendlyGroupCombat/FriendlyGroupCombat.lua"
+local sources = { "FriendlyGroupCombat/FriendlyGroupCombat.lua", "FriendlyGroupCombat/Options.lua" }
 local SECRET, API_ERROR = {}, {}
 local tests, passed = 0, 0
 
@@ -16,10 +16,12 @@ end
 local function Context(previous, options)
     local ctx = {
         units = {}, plates = {}, messages = {}, combat = false, writes = {}, nameHooks = {},
+        widgets = {}, categories = {}, healthReads = 0, guildReads = 0, groupMembers = 0, inRaid = false,
         cvars = previous and previous.cvars or {
             nameplateShowFriendlyPlayers = "0",
             nameplateShowOnlyNameForFriendlyPlayerUnits = "0",
             nameplateUseClassColorForFriendlyPlayerUnitNames = "0",
+            nameplateShowFriendlyPlayerMinions = "0",
             nameplateShowEnemies = "1",
             nameplateShowFriendlyNpcs = "0",
         },
@@ -33,13 +35,81 @@ local function Context(previous, options)
     env.issecretvalue = function(value) return value == SECRET end
     env.GetBuildInfo = function() return "1.60.1", "70888", "", 16001 end
     env.InCombatLockdown = function() return ctx.combat end
-    env.CreateFrame = function()
-        local frame = { scripts = {}, events = {} }
+    local function Widget()
+        local widget = { scripts = {}, events = {}, shown = false, alpha = 1 }
+        function widget:SetPoint(...) self.point = { ... } end
+        function widget:ClearAllPoints() self.point = nil end
+        function widget:SetSize(width, height) self.width, self.height = width, height end
+        function widget:SetWidth(width) self.width = width end
+        function widget:GetWidth() return self.width or 500 end
+        function widget:SetHeight(height) self.height = height end
+        function widget:GetStringHeight()
+            return math.max(1, math.ceil(#(self.text or "") * 7 / self:GetWidth())) * 14
+        end
+        function widget:SetScrollChild(child) self.scrollChild = child end
+        function widget:SetJustifyH() end
+        function widget:SetFontObject() end
+        function widget:SetTextColor() end
+        function widget:SetWordWrap() end
+        function widget:IsForbidden() return false end
+        function widget:GetAlpha() return self.alpha end
+        function widget:SetAlpha(alpha) self.alpha = alpha end
+        function widget:SetText(text) self.text = text end
+        function widget:SetChecked(checked) self.checked = checked end
+        function widget:GetChecked() return self.checked end
+        function widget:Hide() self.shown = false end
+        function widget:Show()
+            self.shown = true
+            if self.scripts.OnShow then self.scripts.OnShow(self) end
+        end
+        function widget:SetScript(kind, fn) self.scripts[kind] = fn end
+        ctx.widgets[#ctx.widgets + 1] = widget
+        return widget
+    end
+    env.CreateFrame = function(kind, name, parent, template)
+        local frame = Widget()
+        frame.kind, frame.template = kind, template
+        if kind == "CheckButton" then frame.Text = Widget() end
+        function frame:CreateFontString() return Widget() end
         function frame:RegisterEvent(event) self.events[event] = true end
         function frame:UnregisterEvent(event) self.events[event] = nil end
-        function frame:SetScript(kind, fn) self.scripts[kind] = fn end
-        ctx.driver = frame
+        if not ctx.driver then ctx.driver = frame end
         return frame
+    end
+    local settings = {
+        RegisterCanvasLayoutCategory = function(panel, title)
+            local category = { panel = panel, name = title }
+            function category:GetID() return 42 end
+            return category
+        end,
+        RegisterAddOnCategory = function(category)
+            ctx.categories[#ctx.categories + 1] = category
+        end,
+        OpenToCategory = function(id)
+            assert(not ctx.combat, "settings opened in combat")
+            equal(id, 42, "use category ID to open options")
+            ctx.openedCategory = id
+            ctx.categories[1].panel:Show()
+        end,
+    }
+    if not (options and options.lateSettings) then env.Settings = settings end
+    ctx.settings = settings
+    function ctx:widget(text)
+        for _, widget in ipairs(self.widgets) do
+            if widget.text == text or (widget.Text and widget.Text.text == text) then return widget end
+        end
+        error("missing widget: " .. text)
+    end
+    function ctx:click(text)
+        local widget = self:widget(text)
+        if widget.kind == "CheckButton" then widget.checked = not widget.checked end
+        widget.scripts.OnClick(widget)
+    end
+    function ctx:hasText(text)
+        for _, widget in ipairs(self.widgets) do
+            if widget.text and widget.text:find(text, 1, true) then return true end
+        end
+        return false
     end
     local function ReadUnit(unit, key)
         local value = ctx.units[unit] and ctx.units[unit][key]
@@ -48,11 +118,41 @@ local function Context(previous, options)
     end
     env.UnitExists = function(unit) return ctx.units[unit] ~= nil end
     env.UnitIsPlayer = function(unit) return ReadUnit(unit, "player") end
+    env.UnitIsMinion = function(unit) return ReadUnit(unit, "minion") end
     env.UnitIsFriend = function(_, unit) return ReadUnit(unit, "friendly") end
-    env.UnitIsUnit = function(unit) return ReadUnit(unit, "self") end
+    env.UnitIsUnit = function(unit, other)
+        if other == "target" then
+            local override = ReadUnit(unit, "target")
+            if override ~= nil then return override end
+            return ctx.target == unit
+        end
+        return ReadUnit(unit, "self")
+    end
+    env.GetGuildInfo = function(unit)
+        ctx.guildReads = ctx.guildReads + 1
+        return ReadUnit(unit, "guild")
+    end
     env.UnitInParty = function(unit) return ReadUnit(unit, "party") end
     env.UnitInRaid = function(unit) return ReadUnit(unit, "raid") end
+    env.UnitPlayerOrPetInParty = function(unit) return ReadUnit(unit, "petParty") end
+    env.UnitPlayerOrPetInRaid = function(unit) return ReadUnit(unit, "petRaid") end
+    env.IsInGroup = function() return ctx.groupMembers > 0 end
+    env.IsInRaid = function() return ctx.inRaid end
+    env.GetNumGroupMembers = function() return ctx.groupMembers end
+    env.UnitIsOwnerOrControllerOfUnit = function(owner, unit)
+        local actualOwner = ReadUnit(unit, "owner")
+        if actualOwner == SECRET then return SECRET end
+        return actualOwner == owner
+    end
     env.UnitAffectingCombat = function(unit) return ReadUnit(unit, "combat") end
+    env.UnitHealth = function(unit)
+        ctx.healthReads = ctx.healthReads + 1
+        return ReadUnit(unit, "health")
+    end
+    env.UnitHealthMax = function(unit)
+        ctx.healthReads = ctx.healthReads + 1
+        return ReadUnit(unit, "maxHealth")
+    end
     env.UnitClassBase = function(unit) return ReadUnit(unit, "class") end
     env.RAID_CLASS_COLORS = { MAGE = { r = 0.25, g = 0.78, b = 0.92 } }
     ctx.nativeNameUpdater = function(frame) frame.name:SetVertexColor(1, 1, 1, 1) end
@@ -121,8 +221,9 @@ local function Context(previous, options)
         frame.HealthBarsContainer.healthBar.shown = not mode
     end
     function ctx:unit(token, properties, frame)
-        local unit = { player = true, friendly = true, self = false,
-            party = false, raid = nil, combat = false }
+        local unit = { player = true, friendly = true, self = false, minion = false,
+            party = false, raid = nil, combat = false, health = 100, maxHealth = 100,
+            petParty = false, petRaid = nil }
         for key, value in pairs(properties or {}) do unit[key] = value end
         self.units[token] = unit
         frame = frame or { alpha = 1, forbidden = false, changes = 0 }
@@ -140,11 +241,20 @@ local function Context(previous, options)
             function frame.name:SetAlpha() error("must never fade the name") end
             frame.name.vertexColor = { 0, 1, 0, 1 }
             function frame.name:IsForbidden() return frame.forbidden end
+            function frame.name:IsShown() return self.shown end
             function frame.name:GetVertexColor()
                 local color = self.vertexColor
                 return color[1], color[2], color[3], color[4]
             end
             function frame.name:SetVertexColor(r, g, b, a) self.vertexColor = { r, g, b, a } end
+            function frame.name:GetJustifyH() return self.justification or "CENTER" end
+            frame.extraRegions = {}
+            function frame:CreateFontString()
+                local label = Widget()
+                function label:IsForbidden() return frame.forbidden end
+                frame.extraRegions[#frame.extraRegions + 1] = label
+                return label
+            end
             frame.showOnlyName = false
             local function Component()
                 local piece = { showOnlyName = false, shown = true, alpha = 1 }
@@ -175,7 +285,10 @@ local function Context(previous, options)
                     self.ClassificationFrame, self.RaidTargetFrame, self.PlayerLevelDiffFrame,
                     self.WidgetContainer
             end
-            function frame:GetRegions() return self.name, self.decoration end
+            function frame:GetRegions()
+                local unpackValues = unpack or table.unpack
+                return self.name, self.decoration, unpackValues(self.extraRegions)
+            end
             function frame:UpdateAnchors() error("unsafe Blizzard Lua layout") end
             function frame:UpdateHitTestArea() error("unsafe Blizzard Lua hit-test helper") end
             function frame:UpdateShowOnlyName() error("unsafe Blizzard Lua name-only helper") end
@@ -190,14 +303,18 @@ local function Context(previous, options)
         self.plates[token] = plate
         return unit, frame, plate
     end
-    local chunk
-    if setfenv then
-        chunk = assert(loadfile(source))
-        setfenv(chunk, env)
-    else
-        chunk = assert(loadfile(source, "t", env))
+    local addon = {}
+    ctx.addon = addon
+    for _, source in ipairs(sources) do
+        local chunk
+        if setfenv then
+            chunk = assert(loadfile(source))
+            setfenv(chunk, env)
+        else
+            chunk = assert(loadfile(source, "t", env))
+        end
+        chunk("FriendlyGroupCombat", addon)
     end
-    chunk("FriendlyGroupCombat")
     ctx:emit("ADDON_LOADED", "FriendlyGroupCombat")
     return ctx
 end
@@ -755,6 +872,589 @@ test("post-hook does not inspect untracked forbidden frames", function()
     equal(#ctx.nameHooks, 1)
     local forbidden = setmetatable({}, { __index = function() error("forbidden frame inspected") end })
     ctx.nameHooks[1](forbidden)
+end)
+
+local FILTER = "Enable friendly nameplate filtering"
+local COLOURS = "Use class colours for names without health bars"
+local GROUP = "Show health bars for group members"
+local COMBAT = "Show health bars for units in combat"
+local MINIONS = "Apply filtering to friendly player minions"
+local TARGET = "Show health bar for current target"
+local GUILD = "Show guild below name-only players"
+
+test("options register once under Add-ons without applying game settings at registration", function()
+    local ctx = Context()
+    equal(#ctx.categories, 1)
+    equal(ctx.categories[1].name, "Smart Friendly Nameplates")
+    equal(ctx.categories[1].panel.shown, false)
+    equal(ctx:widget(FILTER):GetChecked(), true)
+    equal(ctx:widget(COLOURS):GetChecked(), true)
+    equal(#ctx.writes, 0)
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    equal(#ctx.categories, 1)
+end)
+
+test("filter checkbox uses the same restoration path as slash commands", function()
+    local ctx = Context()
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    local _, frame = ctx:unit("nameplate1", { class = "MAGE" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:click(FILTER)
+    equal(ctx.env.FriendlyGroupCombatDB.enabled, false)
+    equal(BarVisible(frame), 1)
+    equal(frame.name.vertexColor[1], 0)
+    equal(ctx.cvars.nameplateShowFriendlyPlayers, "0")
+    ctx:click(FILTER)
+    equal(BarVisible(frame), 0)
+    equal(frame.name.vertexColor[1], 0.25)
+    equal(ctx.cvars.nameplateShowFriendlyPlayers, "1")
+end)
+
+test("colour checkbox changes live names and preserves filtering", function()
+    local ctx = Context()
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    local _, frame = ctx:unit("nameplate1", { class = "MAGE" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:click(COLOURS)
+    equal(ctx.env.FriendlyGroupCombatDB.classColorsOnly, false)
+    equal(BarVisible(frame), 0)
+    equal(frame.name.vertexColor[1], 0)
+    ctx:click(COLOURS)
+    equal(frame.name.vertexColor[1], 0.25)
+    equal(ctx:widget(FILTER):GetChecked(), true)
+end)
+
+test("slash commands keep an open panel in sync and panel refresh does not write CVars", function()
+    local ctx = Context()
+    ctx:command("options")
+    ctx:command("off")
+    ctx:command("colors off")
+    equal(ctx:widget(FILTER):GetChecked(), false)
+    equal(ctx:widget(COLOURS):GetChecked(), false)
+    local writes = #ctx.writes
+    ctx.categories[1].panel.OnRefresh()
+    equal(#ctx.writes, writes)
+    ctx:command("on")
+    equal(ctx:widget(FILTER):GetChecked(), true)
+end)
+
+test("panel changes survive reload and a colour preference is editable while disabled", function()
+    local first = Context()
+    first:click(FILTER)
+    first:click(COLOURS)
+    local reloaded = Context(first)
+    equal(reloaded:widget(FILTER):GetChecked(), false)
+    equal(reloaded:widget(COLOURS):GetChecked(), false)
+    reloaded:click(COLOURS)
+    equal(reloaded.env.FriendlyGroupCombatDB.enabled, false)
+    equal(reloaded.env.FriendlyGroupCombatDB.classColorsOnly, true)
+    equal(#reloaded.writes, 0)
+end)
+
+test("panel toggles in combat defer CVars and refresh their pending message after combat", function()
+    local ctx = Context()
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    local _, frame = ctx:unit("nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    local writes = #ctx.writes
+    ctx.combat = true
+    ctx:click(FILTER)
+    equal(BarVisible(frame), 1)
+    equal(#ctx.writes, writes)
+    assert(ctx:hasText("pending until combat ends"))
+    ctx.combat = false
+    ctx:emit("PLAYER_REGEN_ENABLED")
+    equal(ctx.cvars.nameplateShowFriendlyPlayers, "0")
+    assert(ctx:hasText("Filter disabled."))
+    equal(ctx:hasText("pending until combat ends"), false)
+    ctx.combat = true
+    ctx:click(FILTER)
+    equal(ctx.cvars.nameplateShowFriendlyPlayers, "0")
+    ctx.combat = false
+    ctx:emit("PLAYER_REGEN_ENABLED")
+    equal(ctx.cvars.nameplateShowFriendlyPlayers, "1")
+    assert(ctx:hasText("Filter enabled."))
+end)
+
+test("default actions restore both preferences and diagnostic buttons print in chat", function()
+    local ctx = Context()
+    ctx:command("off")
+    ctx:command("colors off")
+    ctx:click("Restore defaults")
+    equal(ctx:widget(FILTER):GetChecked(), true)
+    equal(ctx:widget(COLOURS):GetChecked(), true)
+    ctx:command("off")
+    ctx:command("colors off")
+    ctx.categories[1].panel.OnDefault()
+    equal(ctx.env.FriendlyGroupCombatDB.enabled, true)
+    equal(ctx.env.FriendlyGroupCombatDB.classColorsOnly, true)
+    local messages = #ctx.messages
+    ctx:click("Print status")
+    assert(#ctx.messages > messages)
+    ctx:unit("target")
+    ctx:click("Inspect target")
+    assert(ctx.messages[#ctx.messages]:find("Target display:", 1, true))
+end)
+
+test("bare sfn and options open the registered category; combat prevents opening", function()
+    local ctx = Context()
+    ctx:command("")
+    equal(ctx.openedCategory, 42)
+    ctx.openedCategory = nil
+    ctx:command("options")
+    equal(ctx.openedCategory, 42)
+    ctx.openedCategory = nil
+    ctx.combat = true
+    ctx:command("")
+    equal(ctx.openedCategory, nil)
+    assert(ctx.messages[#ctx.messages]:find("after leaving combat", 1, true))
+end)
+
+test("late settings registration retries without interrupting the filter", function()
+    local ctx = Context(nil, { lateSettings = true })
+    equal(#ctx.categories, 0)
+    local _, frame = ctx:unit("nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(BarVisible(frame), 0)
+    ctx:command("options")
+    assert(ctx.messages[#ctx.messages]:find("Options > Add-ons", 1, true))
+    ctx.env.Settings = ctx.settings
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    equal(#ctx.categories, 1)
+end)
+
+test("group and combat switches are independent across membership/combat combinations", function()
+    for groupRule = 0, 1 do
+        for combatRule = 0, 1 do
+            local ctx = Context()
+            if groupRule == 0 then ctx:click(GROUP) end
+            if combatRule == 0 then ctx:click(COMBAT) end
+            for party = 0, 1 do
+                for raid = 0, 1 do
+                    for combat = 0, 1 do
+                        local _, frame = ctx:unit("nameplate1", {
+                            party = party == 1, raid = raid == 1 and 2 or false, combat = combat == 1,
+                        })
+                        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+                        local visible = (groupRule == 1 and (party == 1 or raid == 1))
+                            or (combatRule == 1 and combat == 1)
+                        equal(BarVisible(frame), visible and 1 or 0)
+                        ctx:emit("NAME_PLATE_UNIT_REMOVED", "nameplate1")
+                    end
+                end
+            end
+        end
+    end
+end)
+
+test("disabled criteria do not consult restricted group, combat or health APIs", function()
+    local ctx = Context()
+    ctx:click(GROUP)
+    ctx:click(COMBAT)
+    local calls = 0
+    local function Disallowed() calls = calls + 1; error("disabled rule consulted") end
+    ctx.env.UnitInParty, ctx.env.UnitInRaid, ctx.env.UnitAffectingCombat = Disallowed, Disallowed, Disallowed
+    local _, frame = ctx:unit("nameplate1", { health = SECRET, maxHealth = API_ERROR })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:tick()
+    equal(BarVisible(frame), 0)
+    equal(calls, 0)
+    equal(ctx.healthReads, 0)
+    ctx:click(FILTER)
+    equal(BarVisible(frame), 1)
+end)
+
+test("minion option filters pets/guardians/totems only and preserves their native name colours", function()
+    local ctx = Context()
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    local _, minion = ctx:unit("nameplate1", { player = false, minion = true, class = "MAGE" })
+    local _, npc = ctx:unit("nameplate2", { player = false })
+    local _, enemy = ctx:unit("nameplate3", { player = false, minion = true, friendly = false })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate3")
+    equal(minion.changes, 0)
+    equal(ctx.cvars.nameplateShowFriendlyPlayerMinions, "0")
+    ctx:click(MINIONS)
+    equal(ctx.cvars.nameplateShowFriendlyPlayerMinions, "1")
+    equal(BarVisible(minion), 0)
+    equal(minion.name.vertexColor[1], 0)
+    equal(npc.changes, 0)
+    equal(enemy.changes, 0)
+    ctx:nativeNameUpdate(minion)
+    equal(minion.name.vertexColor[1], 1)
+    ctx:click(MINIONS)
+    equal(BarVisible(minion), 1)
+    equal(ctx.cvars.nameplateShowFriendlyPlayerMinions, "0")
+    equal(ctx.cvars.nameplateShowFriendlyNpcs, "0")
+end)
+
+test("minions use pet group membership and their own combat", function()
+    local ctx = Context()
+    ctx:click(MINIONS)
+    local unit, frame = ctx:unit("nameplate1", { player = false, minion = true, petParty = true })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(BarVisible(frame), 1)
+    ctx:click(GROUP)
+    equal(BarVisible(frame), 0)
+    unit.combat = true
+    ctx:tick()
+    equal(BarVisible(frame), 1)
+    ctx:click(COMBAT)
+    equal(BarVisible(frame), 0)
+    ctx:click(GROUP)
+    unit.petParty, unit.petRaid = false, true
+    ctx:emit("GROUP_ROSTER_UPDATE")
+    equal(BarVisible(frame), 1)
+end)
+
+test("guardian/totem membership checks group owners and safely handles restricted ownership", function()
+    for _, inRaid in ipairs({ false, true }) do
+        local ctx = Context()
+        ctx:click(MINIONS)
+        ctx.groupMembers, ctx.inRaid = 2, inRaid
+        local unit, frame = ctx:unit("nameplate1", {
+            player = false, minion = true, owner = inRaid and "raid2" or "party1",
+        })
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(BarVisible(frame), 1)
+        unit.owner = "somebodyElse"
+        ctx:emit("GROUP_ROSTER_UPDATE")
+        equal(BarVisible(frame), 0)
+        unit.owner = SECRET
+        ctx:tick()
+        equal(BarVisible(frame), 1)
+        unit.owner = API_ERROR
+        ctx:tick()
+        equal(BarVisible(frame), 1)
+        ctx:click(GROUP)
+        equal(BarVisible(frame), 0)
+    end
+end)
+
+test("uncertain minion identity leaves NPCs untouched", function()
+    for _, value in ipairs({ SECRET, API_ERROR, false }) do
+        local ctx = Context()
+        ctx:click(MINIONS)
+        local _, frame = ctx:unit("nameplate1", { player = false, minion = value })
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(frame.changes, 0)
+    end
+end)
+
+test("supported options and diagnostics never query protected health APIs", function()
+    local ctx = Context()
+    ctx:click(MINIONS)
+    local _, player = ctx:unit("nameplate1", { class = "MAGE", health = SECRET })
+    local _, minion = ctx:unit("nameplate2", { player = false, minion = true, health = SECRET })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+    ctx:tick()
+    ctx:nativeNameUpdate(player)
+    ctx:nativeNameUpdate(minion)
+    ctx:unit("target", { health = SECRET })
+    ctx:command("debug")
+    ctx:command("status")
+    ctx:click("Restore defaults")
+    equal(ctx.healthReads, 0)
+end)
+
+test("minion CVar ownership survives reload and respects manual changes", function()
+    local first = Context()
+    first:click(MINIONS)
+    local reload = Context(first)
+    reload:emit("PLAYER_ENTERING_WORLD")
+    equal(reload.cvars.nameplateShowFriendlyPlayerMinions, "1")
+    reload:command("off")
+    equal(reload.cvars.nameplateShowFriendlyPlayerMinions, "0")
+    reload:command("on")
+    reload.cvars.nameplateShowFriendlyPlayerMinions = "2"
+    reload:click(MINIONS)
+    equal(reload.cvars.nameplateShowFriendlyPlayerMinions, "2")
+end)
+
+test("minion activation and deactivation in combat defer only game-setting writes", function()
+    local ctx = Context()
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    local _, frame = ctx:unit("nameplate1", { player = false, minion = true })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx.combat = true
+    local writes = #ctx.writes
+    ctx:click(MINIONS)
+    equal(BarVisible(frame), 0)
+    equal(#ctx.writes, writes)
+    ctx.combat = false
+    ctx:emit("PLAYER_REGEN_ENABLED")
+    equal(ctx.cvars.nameplateShowFriendlyPlayerMinions, "1")
+    ctx.combat = true
+    ctx:click(MINIONS)
+    equal(BarVisible(frame), 1)
+    equal(ctx.cvars.nameplateShowFriendlyPlayerMinions, "1")
+    ctx.combat = false
+    ctx:emit("PLAYER_REGEN_ENABLED")
+    equal(ctx.cvars.nameplateShowFriendlyPlayerMinions, "0")
+end)
+
+test("new preferences persist and defaults preserve the original behaviour", function()
+    local first = Context()
+    first:click(GROUP)
+    first:click(COMBAT)
+    first:click(MINIONS)
+    local reload = Context(first)
+    equal(reload:widget(GROUP):GetChecked(), false)
+    equal(reload:widget(COMBAT):GetChecked(), false)
+    equal(reload:widget(MINIONS):GetChecked(), true)
+    reload:click("Restore defaults")
+    equal(reload:widget(GROUP):GetChecked(), true)
+    equal(reload:widget(COMBAT):GetChecked(), true)
+    equal(reload:widget(MINIONS):GetChecked(), false)
+    equal(reload:widget(FILTER):GetChecked(), true)
+end)
+
+test("old saved preferences survive migration and new defaults are filled in", function()
+    local previous = { env = { FriendlyGroupCombatDB = { enabled = false, classColorsOnly = false } } }
+    local ctx = Context(previous)
+    equal(ctx:widget(FILTER):GetChecked(), false)
+    equal(ctx:widget(COLOURS):GetChecked(), false)
+    equal(ctx:widget(GROUP):GetChecked(), true)
+    equal(ctx:widget(COMBAT):GetChecked(), true)
+    equal(ctx:widget(MINIONS):GetChecked(), false)
+end)
+
+test("all options remain in a scrollable canvas and reflow on a narrower viewport", function()
+    local ctx = Context()
+    local scroll
+    for _, widget in ipairs(ctx.widgets) do
+        if widget.kind == "ScrollFrame" then scroll = widget end
+    end
+    assert(scroll and scroll.scrollChild)
+    assert(scroll.scrollChild.height > 500)
+    local height = scroll.scrollChild.height
+    scroll.scripts.OnSizeChanged(scroll, 300)
+    equal(scroll.scrollChild.width, 300)
+    assert(scroll.scrollChild.height > height)
+    assert(ctx:widget("Inspect target").point[5] < ctx:widget("Restore defaults").point[5])
+end)
+
+test("current target shows its bar immediately and previous target returns to name-only", function()
+    local ctx = Context()
+    ctx:click(TARGET)
+    ctx:click(GUILD)
+    local _, first = ctx:unit("nameplate1", { class = "MAGE", guild = "First Guild" })
+    local _, second = ctx:unit("nameplate2", { guild = "Second Guild" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+    ctx.target = "nameplate1"
+    ctx:emit("PLAYER_TARGET_CHANGED")
+    equal(BarVisible(first), 1)
+    equal(first.name.vertexColor[1], 0)
+    equal(first.extraRegions[1].shown, false)
+    equal(BarVisible(second), 0)
+    ctx.target = "nameplate2"
+    ctx:emit("PLAYER_TARGET_CHANGED")
+    equal(BarVisible(first), 0)
+    equal(first.extraRegions[1].shown, true)
+    equal(BarVisible(second), 1)
+    ctx.target = nil
+    ctx:emit("PLAYER_TARGET_CHANGED")
+    equal(BarVisible(second), 0)
+    ctx.target = "nameplate1"
+    ctx:click(TARGET)
+    equal(BarVisible(first), 0)
+end)
+
+test("target condition respects minion scope, NPC exclusion and unavailable comparisons", function()
+    local ctx = Context()
+    ctx:click(TARGET)
+    ctx:click(MINIONS)
+    local unit, pet = ctx:unit("nameplate1", { player = false, minion = true })
+    local _, npc = ctx:unit("nameplate2", { player = false })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+    equal(BarVisible(pet), 0)
+    ctx.target = "nameplate1"
+    ctx:emit("PLAYER_TARGET_CHANGED")
+    equal(BarVisible(pet), 1)
+    equal(npc.changes, 0)
+    ctx.target = nil
+    for _, unknown in ipairs({ SECRET, API_ERROR }) do
+        unit.target = unknown
+        ctx:tick()
+        equal(BarVisible(pet), 1)
+    end
+    ctx:click(TARGET)
+    equal(BarVisible(pet), 0)
+end)
+
+test("guild labels preserve the alignment of native names", function()
+    for _, justify in ipairs({ "LEFT", "RIGHT" }) do
+        local ctx = Context()
+        ctx:click(GUILD)
+        local _, frame = ctx:unit("nameplate1", { guild = "Example" })
+        frame.name.justification = justify
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(frame.extraRegions[1].point[1], "TOP" .. justify)
+        equal(frame.extraRegions[1].point[3], "BOTTOM" .. justify)
+        ctx:command("off")
+    end
+end)
+
+test("guild labels appear only in name-only mode and are not faded on later updates", function()
+    local ctx = Context()
+    local unit, frame = ctx:unit("nameplate1", { guild = "Example Guild" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(#frame.extraRegions, 0)
+    equal(ctx.guildReads, 0)
+    ctx:click(GUILD)
+    local label = frame.extraRegions[1]
+    equal(label.text, "<Example Guild>")
+    equal(label.shown, true)
+    equal(label.point[2], frame.name)
+    for _ = 1, 3 do ctx:tick(); ctx:nativeNameUpdate(frame) end
+    equal(label.alpha, 1)
+    equal(label.shown, true)
+    equal(#frame.extraRegions, 1)
+    unit.party = true
+    ctx:emit("GROUP_ROSTER_UPDATE")
+    equal(label.text, "")
+    equal(label.shown, false)
+    unit.party = false
+    ctx:emit("GROUP_ROSTER_UPDATE")
+    equal(label.shown, true)
+    ctx:click(GUILD)
+    equal(label.text, "")
+    equal(label.shown, false)
+end)
+
+test("late guild data and guild changes refresh without leaving stale text", function()
+    local ctx = Context()
+    ctx:click(GUILD)
+    local unit, frame = ctx:unit("nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(#frame.extraRegions, 0)
+    unit.guild = "First"
+    ctx:emit("UNIT_NAME_UPDATE", "nameplate1")
+    local label = frame.extraRegions[1]
+    equal(label.text, "<First>")
+    unit.guild = "Second"
+    ctx:emit("PLAYER_GUILD_UPDATE")
+    equal(label.text, "<Second>")
+    for _, unknown in ipairs({ SECRET, API_ERROR, false, "" }) do
+        unit.guild = unknown
+        ctx:tick()
+        equal(label.text, "")
+        equal(label.shown, false)
+    end
+end)
+
+test("guild label follows native name visibility instead of appearing alone", function()
+    local ctx = Context()
+    ctx:click(GUILD)
+    local _, frame = ctx:unit("nameplate1", { guild = "Example" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    local label = frame.extraRegions[1]
+    equal(label.shown, true)
+    frame.name.shown = false
+    ctx:nativeNameUpdate(frame)
+    equal(label.shown, false)
+    frame.name.shown = true
+    ctx:nativeNameUpdate(frame)
+    equal(label.shown, true)
+    frame.name.IsShown = function() return SECRET end
+    ctx:tick()
+    equal(label.shown, false)
+end)
+
+test("guild lookup excludes minions, NPCs, enemies and forbidden frames", function()
+    local ctx = Context()
+    ctx:click(GUILD)
+    ctx:click(MINIONS)
+    for _, properties in ipairs({ { player = false, minion = true }, { player = false }, { friendly = false } }) do
+        local _, frame = ctx:unit("nameplate1", properties)
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(#frame.extraRegions, 0)
+    end
+    ctx:unit("nameplate2")
+    ctx:emit("FORBIDDEN_NAME_PLATE_UNIT_ADDED", "nameplate2")
+    ctx:tick()
+    equal(ctx.guildReads, 0)
+end)
+
+test("pool reuse clears the old guild before another player or NPC", function()
+    local ctx = Context()
+    ctx:click(GUILD)
+    local _, frame = ctx:unit("nameplate1", { guild = "Previous" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    local label = frame.extraRegions[1]
+    ctx:emit("NAME_PLATE_UNIT_REMOVED", "nameplate1")
+    equal(label.text, "")
+    equal(label.shown, false)
+    ctx:unit("nameplate2", { player = false }, frame)
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+    equal(label.text, "")
+    ctx:emit("NAME_PLATE_UNIT_REMOVED", "nameplate2")
+    ctx:unit("nameplate3", { guild = "New" }, frame)
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate3")
+    equal(label.text, "<New>")
+end)
+
+test("removed width setting is cleared and native name geometry is untouched", function()
+    local previous = { env = { FriendlyGroupCombatDB = {
+        enabled = true, nameWidthPercent = 500, showGuild = true, showTarget = true,
+    } } }
+    local ctx = Context(previous)
+    equal(ctx.env.FriendlyGroupCombatDB.nameWidthPercent, nil)
+    equal(ctx:widget(GUILD):GetChecked(), true)
+    equal(ctx:widget(TARGET):GetChecked(), true)
+    ctx.addon.SetOption("nameWidthPercent", 500)
+    equal(ctx.env.FriendlyGroupCombatDB.nameWidthPercent, nil)
+    for _, widget in ipairs(ctx.widgets) do
+        assert(widget.kind ~= "Slider", "retired slider still exists")
+    end
+    local _, frame = ctx:unit("nameplate1", { guild = "Example" })
+    local function Untouched() error("native name geometry must not be accessed") end
+    frame.name.GetWidth, frame.name.SetWidth = Untouched, Untouched
+    frame.name.GetPoint, frame.name.SetPoint, frame.name.ClearAllPoints = Untouched, Untouched, Untouched
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:tick()
+    ctx:nativeNameUpdate(frame)
+    equal(BarVisible(frame), 0)
+    equal(frame.extraRegions[1].text, "<Example>")
+    ctx:command("off")
+    equal(BarVisible(frame), 1)
+    equal(frame.extraRegions[1].shown, false)
+end)
+
+test("guild and target preferences survive reload and restore defaults", function()
+    local first = Context()
+    first:click(GUILD)
+    first:click(TARGET)
+    local reload = Context(first)
+    equal(reload:widget(GUILD):GetChecked(), true)
+    equal(reload:widget(TARGET):GetChecked(), true)
+    reload:click("Restore defaults")
+    equal(reload:widget(GUILD):GetChecked(), false)
+    equal(reload:widget(TARGET):GetChecked(), false)
+end)
+
+test("name visuals do not write native frame state or call health/layout helpers", function()
+    local ctx = Context()
+    ctx:click(GUILD)
+    local _, frame, plate = ctx:unit("nameplate1", { guild = "Example", class = "MAGE" })
+    local proxy = setmetatable({}, {
+        __index = frame,
+        __newindex = function(_, key) error("tainting native field: " .. key) end,
+    })
+    plate.UnitFrame = proxy
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:nativeNameUpdate(proxy)
+    equal(frame.extraRegions[1].text, "<Example>")
+    ctx:command("off")
+    equal(frame.extraRegions[1].shown, false)
+    equal(frame.showOnlyName, false)
+    equal(ctx.healthReads, 0)
+    equal(#ctx.messages, 1) -- The command acknowledgement only.
 end)
 
 print(string.format("%d/%d integration checks passed", passed, tests))

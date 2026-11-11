@@ -5,15 +5,23 @@ Blizzard's friendly player health bars for the players you want to see.
 
 ## How it works
 
-| Friendly player | Display |
+| Friendly player, with default settings | Display |
 | --- | --- |
 | In your party or raid | Full nameplate, even out of combat |
 | Outside your group, but personally in combat | Full nameplate |
 | Outside your group and out of combat | Name only, coloured by class |
 
-The combat check concerns **that player**, not your own combat state. Names
-return to their normal colour while their health bar is visible. Enemy units,
-NPCs, and your personal resource display are left alone.
+The combat check concerns **that unit**, not your own combat state. Group,
+combat and current-target rules are independent, optional conditions.
+**Any enabled condition** keeps the full bar visible; otherwise the unit shows
+its name only. Turning all three
+conditions off shows names only for all eligible units while the master
+filter is enabled.
+
+Names return to their normal colour while their health bar is visible. Enemy
+units, ordinary NPCs, and your personal resource display are left alone. An
+optional setting extends the same conditions to friendly players' minions:
+pets, guardians and totems. Minion names keep their native colours.
 
 The addon uses Blizzard's existing nameplate text. It does not recreate the
 game engine's native 3D overhead names.
@@ -47,13 +55,42 @@ The folder and saved-variable names are kept from the prototype so existing
 settings survive this rename. Replace an existing `FriendlyGroupCombat`
 installation; do not install a second copy under another folder name.
 
-The filter and class-coloured name-only text are enabled by default. Existing
-users keep their enabled/disabled settings; use `/sfn on` if needed.
+The filter, group condition, combat condition and class-coloured name-only text
+are enabled by default. Minion support is off by default. Existing users keep
+their preferences; use `/sfn on` if needed.
+The current-target rule and guild labels are off by default.
+
+## In-game options
+
+Open **Options → Add-ons → Smart Friendly Nameplates**, or type **`/sfn`**.
+
+- **Enable friendly nameplate filtering**: master switch. Other preferences are
+  kept when it is off.
+- **Show health bars for group members**: keep bars for party/raid members,
+  including grouped owners' minions when minion support is enabled.
+- **Show health bars for units in combat**: use each unit's own combat state.
+- **Show health bar for current target**: show a full bar for your selected
+  eligible friendly player or minion, even outside your group and out of combat.
+- **Apply filtering to friendly player minions**: extend the same rules to pets,
+  guardians and totems, without changing ordinary NPCs.
+- **Use class colours for names without health bars**: apply class colours only
+  to name-only players while filtering is enabled.
+- **Show guild below name-only players**: display the player's guild beneath
+  their visible name, when guild information is available. Hide it with full bars.
+- **Restore defaults**: enable filtering, group/combat conditions and class
+  colours; disable minions, target and guild options.
+- **Print status** and **Inspect target**: print diagnostics in chat.
+
+Changes apply immediately and are saved per character. Changes to protected
+game settings wait until combat ends; the panel shows when changes are pending.
+The panel scrolls to keep every option accessible and shares saved preferences
+with slash commands.
 
 ## Commands
 
 | Command | Action |
 | --- | --- |
+| `/sfn` or `/sfn options` | Open the in-game options panel (out of combat) |
 | `/sfn on` | Enable the filter and its required game settings |
 | `/sfn off` | Restore nameplates and the previous settings still owned by the addon |
 | `/sfn colors on` | Use class colours only for name-only players |
@@ -70,12 +107,26 @@ While enabled, the addon turns friendly player nameplates on and the global
 name-only option off. Selective colouring also keeps the global **Use Class
 Color for Names** option off, applying colour directly to name-only text.
 Previous values are saved per character, including across `/reload`.
+Minion support also enables Blizzard's friendly player minion nameplates and
+restores that setting when disabled. Native minion subtype and distance rules
+still apply.
 
 - Game-setting changes requested during combat wait until combat ends.
 - Other players' combat and group changes are checked about every 0.2 seconds.
 - Name colours are reapplied immediately after Blizzard updates names, including
   when hovering players or NPCs, so the periodic check does not cause a colour flash.
+- Name width and truncation remain under the game's control.
+- Guild labels use available, non-secret guild text only. Missing information
+  displays no guild line. Guild labels follow native name visibility and do not
+  appear for minions or ordinary NPCs.
 - Unknown or secret group/combat information leaves the full nameplate visible.
+- Only enabled conditions are checked. A disabled condition's restricted data
+  does not affect visibility.
+- Health-based filtering is unavailable on this client: the unit API declares
+  current health as a secret value. No below-full-health option is provided.
+- Minion group membership uses pet membership and, for guardians/totems, guarded
+  ownership checks against party/raid members. Restricted ownership leaves the
+  full bar visible.
 - Unknown or secret class/colour information leaves the native colour intact.
 - Hidden health bars can still occupy stacking space and retain their normal
   click area. Native name-display, distance and simplified-style rules apply.
@@ -94,7 +145,7 @@ Run the integration checks and Lua syntax check from the repository root:
 
 ```sh
 lua5.1 tests/test_addon.lua
-luac5.1 -p FriendlyGroupCombat/FriendlyGroupCombat.lua
+luac5.1 -p FriendlyGroupCombat/*.lua
 ```
 
 Lua 5.1 is the compatibility target. The test harness also runs on newer Lua

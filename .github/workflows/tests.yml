@@ -19,7 +19,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y lua5.1
       - name: Check Lua syntax
-        run: luac5.1 -p FriendlyGroupCombat/FriendlyGroupCombat.lua
+        run: luac5.1 -p FriendlyGroupCombat/*.lua
       - name: Run integration checks
         run: lua5.1 tests/test_addon.lua
       - name: Build installable archive

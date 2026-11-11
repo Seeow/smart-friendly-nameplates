@@ -1,8 +1,9 @@
 ## Interface: 16001
 ## Title: Smart Friendly Nameplates
-## Notes: Show friendly player health bars for your party/raid or players in combat; names only for everyone else. /sfn
+## Notes: Filter friendly player and minion health bars by group or combat. Configure with /sfn.
 ## Author: Seeow
-## Version: 0.1.5
+## Version: 0.1.10
 ## SavedVariablesPerCharacter: FriendlyGroupCombatDB
 
 FriendlyGroupCombat.lua
+Options.lua

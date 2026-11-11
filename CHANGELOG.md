@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.1.10
+
+- Remove the experimental name-width slider and all name geometry overrides.
+- Remove its saved preference on load and leave name width under native control.
+- Retain the in-game options, group/combat/target rules, minion support and guild
+  labels from the preceding local versions.
+
+## 0.1.9
+
+- Fix the width slider doing nothing for centered names with a single anchor
+  or names constrained by an explicit FontString width.
+- Resize both the anchor span and the text width; restore the original explicit
+  width on full bars, disabling and frame reuse.
+- Measure native width with the addon's own constraints removed so the slider
+  follows native resizing without compounding on each update.
+- Report unavailable or restricted name layouts in `/sfn status`.
+
+## 0.1.8
+
+- Add an optional current-target condition to show a full friendly health bar.
+- Add optional guild text below name-only players, following native name
+  visibility and clearing on full bars, disabling and frame reuse.
+- Add a 100–500% name-only text-width slider, with the game default identified
+  as 100% of the current native width. Preserve vertical placement and alignment.
+- Securely reapply width after native anchor updates and restore native anchors
+  on full bars, disabling and reuse. Leave unconstrained layouts unchanged.
+- Keep new options off/native by default and save them per character.
+
+## 0.1.7
+
+- Keep the master filter and add independent group and combat visibility rules.
+- Add optional friendly player minion filtering for pets, guardians and totems,
+  including guarded group ownership checks. Keep their native name colours.
+- Own and restore the native friendly player minion nameplate setting only while
+  minion support is enabled.
+- Make the options panel scrollable with responsive text and button layout.
+- Preserve current behaviour by default: group/combat on, minions off.
+- Omit health-based filtering because this client's current-health API returns
+  secret values that cannot drive addon visibility decisions.
+
+## 0.1.6
+
+- Add an in-game panel under Options → Add-ons → Smart Friendly Nameplates.
+- Expose filter and name-only class-colour settings, per-character persistence,
+  restore defaults, and status/target diagnostic buttons.
+- Keep panel controls and slash commands in sync, including pending game-setting
+  changes that must wait until combat ends.
+- Open the options panel with `/sfn` or `/sfn options`.
+
 ## 0.1.5
 
 - Fix class-coloured names briefly reverting to the native colour on mouseover.
