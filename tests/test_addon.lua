@@ -1,5 +1,9 @@
 -- Integration checks with a simulated WoW event loop. Lua 5.1+ / Fengari.
-local sources = { "FriendlyGroupCombat/FriendlyGroupCombat.lua", "FriendlyGroupCombat/Options.lua" }
+local sources = {
+    "FriendlyGroupCombat/Localization.lua", "FriendlyGroupCombat/LocalesEurope.lua",
+    "FriendlyGroupCombat/LocalesAsia.lua", "FriendlyGroupCombat/FriendlyGroupCombat.lua",
+    "FriendlyGroupCombat/Options.lua",
+}
 local SECRET, API_ERROR = {}, {}
 local tests, passed = 0, 0
 
@@ -16,7 +20,8 @@ end
 local function Context(previous, options)
     local ctx = {
         units = {}, plates = {}, messages = {}, combat = false, writes = {}, nameHooks = {},
-        widgets = {}, categories = {}, healthReads = 0, guildReads = 0, groupMembers = 0, inRaid = false,
+        widgets = {}, categories = {}, healthReads = 0, guildReads = 0, tooltipReads = 0,
+        groupMembers = 0, inRaid = false,
         cvars = previous and previous.cvars or {
             nameplateShowFriendlyPlayers = "0",
             nameplateShowOnlyNameForFriendlyPlayerUnits = "0",
@@ -24,6 +29,7 @@ local function Context(previous, options)
             nameplateShowFriendlyPlayerMinions = "0",
             nameplateShowEnemies = "1",
             nameplateShowFriendlyNpcs = "0",
+            colorblindmode = "0",
         },
     }
     local env = setmetatable({}, { __index = _G })
@@ -34,6 +40,7 @@ local function Context(previous, options)
     env.print = function(message) ctx.messages[#ctx.messages + 1] = message end
     env.issecretvalue = function(value) return value == SECRET end
     env.GetBuildInfo = function() return "1.60.1", "70888", "", 16001 end
+    env.GetLocale = function() return options and options.locale or "enUS" end
     env.InCombatLockdown = function() return ctx.combat end
     local function Widget()
         local widget = { scripts = {}, events = {}, shown = false, alpha = 1 }
@@ -46,6 +53,7 @@ local function Context(previous, options)
         function widget:GetStringHeight()
             return math.max(1, math.ceil(#(self.text or "") * 7 / self:GetWidth())) * 14
         end
+        function widget:GetStringWidth() return #(self.text or "") * 7 end
         function widget:SetScrollChild(child) self.scrollChild = child end
         function widget:SetJustifyH() end
         function widget:SetFontObject() end
@@ -69,6 +77,11 @@ local function Context(previous, options)
     env.CreateFrame = function(kind, name, parent, template)
         local frame = Widget()
         frame.kind, frame.template = kind, template
+        function frame:GetFontString()
+            self.fontString = self.fontString or Widget()
+            self.fontString.text = self.text
+            return self.fontString
+        end
         if kind == "CheckButton" then frame.Text = Widget() end
         function frame:CreateFontString() return Widget() end
         function frame:RegisterEvent(event) self.events[event] = true end
@@ -132,6 +145,11 @@ local function Context(previous, options)
         ctx.guildReads = ctx.guildReads + 1
         return ReadUnit(unit, "guild")
     end
+    env.Enum = { TooltipDataLineType = { None = 0, UnitName = 2, UnitLevel = 47, UnitType = 48 } }
+    env.C_TooltipInfo = { GetUnit = function(unit)
+        ctx.tooltipReads = ctx.tooltipReads + 1
+        return ReadUnit(unit, "tooltip")
+    end }
     env.UnitInParty = function(unit) return ReadUnit(unit, "party") end
     env.UnitInRaid = function(unit) return ReadUnit(unit, "raid") end
     env.UnitPlayerOrPetInParty = function(unit) return ReadUnit(unit, "petParty") end
@@ -154,6 +172,13 @@ local function Context(previous, options)
         return ReadUnit(unit, "maxHealth")
     end
     env.UnitClassBase = function(unit) return ReadUnit(unit, "class") end
+    env.UnitSelectionColor = function(unit)
+        local color = ReadUnit(unit, "selectionColor")
+        if color == SECRET then return SECRET, SECRET, SECRET end
+        if color == false then return nil end
+        color = color or { 0, 1, 0 }
+        return color[1], color[2], color[3]
+    end
     env.RAID_CLASS_COLORS = { MAGE = { r = 0.25, g = 0.78, b = 0.92 } }
     ctx.nativeNameUpdater = function(frame) frame.name:SetVertexColor(1, 1, 1, 1) end
     if not (options and options.lateNameUpdater) then
@@ -1455,6 +1480,431 @@ test("name visuals do not write native frame state or call health/layout helpers
     equal(frame.showOnlyName, false)
     equal(ctx.healthReads, 0)
     equal(#ctx.messages, 1) -- The command acknowledgement only.
+end)
+
+test("French client localizes the panel and retains stable setting keys and commands", function()
+    local ctx = Context(nil, { locale = "frFR" })
+    local L = ctx.addon.L
+    equal(L.UI_ENABLE, "Activer le filtre des barres d’info amicales")
+    equal(ctx:widget(L.UI_ENABLE):GetChecked(), true)
+    local _, frame = ctx:unit("nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:click(L.UI_ENABLE)
+    equal(ctx.env.FriendlyGroupCombatDB.enabled, false)
+    equal(BarVisible(frame), 1)
+    ctx:command("on")
+    equal(ctx.env.FriendlyGroupCombatDB.enabled, true)
+    equal(BarVisible(frame), 0)
+    ctx:click(L.UI_COLORS)
+    equal(ctx.env.FriendlyGroupCombatDB.classColorsOnly, false)
+    ctx:command("colors on")
+    equal(ctx.env.FriendlyGroupCombatDB.classColorsOnly, true)
+    equal(ctx.messages[#ctx.messages], "|cff66ccffSmart Friendly Nameplates:|r " .. L.CMD_COLORS_ON)
+    ctx:command("help")
+    assert(ctx.messages[#ctx.messages]:find(L.CMD_HELP, 1, true))
+    equal(ctx.env.SLASH_FRIENDLYGROUPCOMBAT1, "/sfn")
+end)
+
+test("French status, target diagnostics and combat deferral use localized text", function()
+    local ctx = Context(nil, { locale = "frFR" })
+    local L = ctx.addon.L
+    ctx:unit("target", { combat = SECRET })
+    ctx:command("debug")
+    assert(ctx.messages[1]:find("Cible : joueur=oui", 1, true))
+    assert(ctx.messages[1]:find("son combat=indisponible", 1, true))
+    ctx.combat = true
+    ctx:command("off")
+    assert(ctx:hasText(L.UI_PENDING))
+    equal(ctx.messages[#ctx.messages], "|cff66ccffSmart Friendly Nameplates:|r " .. L.CMD_PENDING)
+    ctx.combat = false
+    ctx:emit("PLAYER_REGEN_ENABLED")
+    assert(ctx:hasText(L.UI_DISABLED))
+    ctx:command("status")
+    assert(ctx.messages[#ctx.messages]:find(L.UI_RESTRICTIONS, 1, true))
+end)
+
+test("unsupported locales and missing translation keys fall back to English", function()
+    local unknown = Context(nil, { locale = "xxXX" })
+    equal(unknown.addon.L.UI_ENABLE, FILTER)
+    equal(unknown:widget(FILTER):GetChecked(), true)
+    local british = Context(nil, { locale = "enGB" })
+    equal(british.addon.L.UI_ENABLE, FILTER)
+    local french = Context(nil, { locale = "frFR" })
+    french.addon.L.UI_ENABLE = nil
+    equal(french.addon.L.UI_ENABLE, FILTER)
+end)
+
+test("French warnings and protected-error labels are localized", function()
+    local ctx = Context(nil, { locale = "frFR" })
+    ctx.failWrite = true
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    assert(ctx.messages[1]:find("Impossible de modifier nameplateShowFriendlyPlayers", 1, true))
+    local _, frame = ctx:unit("nameplate1")
+    frame.decoration.SetAlpha = function(self, alpha)
+        if alpha == 0 then error(SECRET) end
+        self.alpha = alpha
+    end
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    assert(ctx.messages[#ctx.messages]:find("Filtre suspendu pour cette barre d’info : erreur protégée", 1, true))
+    ctx:command("status")
+    assert(ctx.messages[#ctx.messages - 1]:find("Dernier problème :", 1, true))
+end)
+
+local clientLocales = { "enUS", "enGB", "frFR", "deDE", "esES", "esMX", "itIT", "ptBR", "ruRU", "koKR", "zhCN", "zhTW" }
+
+test("every translated locale has all keys and valid matching format placeholders", function()
+    local english = getmetatable(Context().addon.L).__index
+    for _, locale in ipairs(clientLocales) do
+        local ctx = Context(nil, { locale = locale })
+        local L = ctx.addon.L
+        for key, original in pairs(english) do
+            if locale ~= "enUS" and locale ~= "enGB" then
+                assert(type(rawget(L, key)) == "string", locale .. " lacks " .. key)
+            end
+            local signature, translatedSignature, arguments = {}, {}, {}
+            for specifier in original:gmatch("%%([sd])") do
+                signature[#signature + 1] = specifier
+                arguments[#arguments + 1] = specifier == "d" and 1 or "test"
+            end
+            for specifier in L[key]:gmatch("%%([sd])") do
+                translatedSignature[#translatedSignature + 1] = specifier
+            end
+            equal(table.concat(translatedSignature), table.concat(signature), locale .. "/" .. key)
+            local unpackValues = unpack or table.unpack
+            assert(pcall(string.format, L[key], unpackValues(arguments)), locale .. "/" .. key .. " cannot be formatted")
+        end
+        ctx:unit("target", { combat = SECRET })
+        ctx:command("debug")
+        ctx:command("status")
+        ctx:command("help")
+        ctx:command("off")
+        ctx:command("on")
+        assert(ctx:widget(L.UI_ENABLE):GetChecked())
+    end
+end)
+
+test("translated buttons fit a narrow panel and can wrap onto more than one line", function()
+    for _, locale in ipairs(clientLocales) do
+        local ctx = Context(nil, { locale = locale })
+        local scroll
+        for _, widget in ipairs(ctx.widgets) do
+            if widget.kind == "ScrollFrame" then scroll = widget end
+        end
+        scroll.scripts.OnSizeChanged(scroll, 300)
+        for _, key in ipairs({ "UI_DEFAULTS", "UI_STATUS", "UI_INSPECT" }) do
+            local button = ctx:widget(ctx.addon.L[key])
+            assert(button.width <= 252, locale .. " button exceeds content width")
+            assert(button.height >= button:GetFontString():GetStringHeight() + 12,
+                locale .. " button clips its translated label")
+        end
+    end
+end)
+
+local function NPCTooltip(title, colorblind)
+    local lines = { { type = 2, leftText = "NPC name" } }
+    if colorblind then lines[#lines + 1] = { type = 0, leftText = "Friendly" } end
+    if title then lines[#lines + 1] = { type = 0, leftText = title } end
+    lines[#lines + 1] = { type = 47, leftText = "Level 60" }
+    return { lines = lines }
+end
+
+test("NPC modes are independent of player rules, minions and class colours", function()
+    local ctx = Context()
+    ctx.addon.SetOption("includeNPCs", true)
+    ctx.addon.SetOption("showTarget", true)
+    local unit, npc = ctx:unit("nameplate1", {
+        player = false, combat = true, target = true, party = true, class = "MAGE",
+        tooltip = NPCTooltip("Weaponsmith"),
+    })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(BarVisible(npc), 0)
+    equal(npc.name.vertexColor[1], 0, "NPC keeps native colour")
+    equal(npc.extraRegions[1].text, "<Weaponsmith>")
+    ctx.addon.SetOption("showNPCBars", true)
+    equal(BarVisible(npc), 1)
+    equal(npc.extraRegions[1].shown, false)
+    ctx.addon.SetOption("showNPCBars", false)
+    equal(BarVisible(npc), 0)
+    equal(npc.extraRegions[1].shown, true)
+    ctx.addon.SetOption("includeNPCs", false)
+    equal(BarVisible(npc), 1)
+    equal(npc.extraRegions[1].shown, false)
+    equal(ctx.healthReads, 0)
+end)
+
+test("NPC inclusion excludes enemies, minions, players and unknown identities", function()
+    local ctx = Context()
+    ctx.addon.SetOption("includeNPCs", true)
+    for _, properties in ipairs({
+        { player = false, friendly = false }, { player = false, minion = true },
+        { player = SECRET }, { player = false, minion = SECRET },
+        { player = false, minion = API_ERROR }, { player = false, friendly = SECRET },
+        { player = false, self = true },
+    }) do
+        local _, frame = ctx:unit("nameplate1", properties)
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(BarVisible(frame), 1)
+        equal(#frame.extraRegions, 0)
+    end
+    local _, player = ctx:unit("nameplate2")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+    equal(BarVisible(player), 0, "existing player filter still applies")
+    equal(ctx.tooltipReads, 0)
+end)
+
+test("NPC support and minion support remain separate", function()
+    local ctx = Context()
+    ctx.addon.SetOption("includeNPCs", true)
+    ctx.addon.SetOption("showNPCBars", true)
+    ctx.addon.SetOption("includeMinions", true)
+    local _, npc = ctx:unit("nameplate1", { player = false })
+    local _, pet = ctx:unit("nameplate2", { player = false, minion = true })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+    equal(BarVisible(npc), 1)
+    equal(BarVisible(pet), 0)
+    ctx.addon.SetOption("includeMinions", false)
+    ctx.addon.SetOption("showNPCBars", false)
+    equal(BarVisible(npc), 0)
+    equal(BarVisible(pet), 1)
+end)
+
+test("NPC titles support colourblind tooltips and follow native name visibility", function()
+    for _, colorblind in ipairs({ false, true }) do
+        local ctx = Context()
+        ctx.cvars.colorblindmode = colorblind and "1" or "0"
+        ctx.addon.SetOption("includeNPCs", true)
+        local _, frame = ctx:unit("nameplate1", { player = false,
+            tooltip = NPCTooltip("Marchand d’armes", colorblind) })
+        frame.name.justification = "LEFT"
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        local label = frame.extraRegions[1]
+        equal(label.text, "<Marchand d’armes>")
+        equal(label.point[1], "TOPLEFT")
+        frame.name.shown = false
+        ctx:nativeNameUpdate(frame)
+        equal(label.shown, false)
+        frame.name.shown = true
+        ctx:nativeNameUpdate(frame)
+        equal(label.shown, true)
+        ctx:tick()
+        equal(label.alpha, 1)
+        ctx.addon.SetOption("showNPCTitle", false)
+        equal(label.shown, false)
+    end
+end)
+
+test("NPC title lookup rejects missing, secret, malformed and non-title lines", function()
+    local samples = { false, SECRET, API_ERROR, {}, { lines = SECRET },
+        { lines = { SECRET } }, { lines = { { type = SECRET } } },
+        NPCTooltip(nil), NPCTooltip(SECRET), NPCTooltip(""),
+        { lines = { { type = 2 }, { type = SECRET, leftText = "No" } } },
+        { lines = { { type = 2 }, { type = 48, leftText = "Humanoid" } } },
+        { lines = { { type = 2 }, { type = 0, leftText = SECRET } } },
+    }
+    for _, sample in ipairs(samples) do
+        local ctx = Context()
+        ctx.addon.SetOption("includeNPCs", true)
+        local _, frame = ctx:unit("nameplate1", { player = false, tooltip = sample })
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(BarVisible(frame), 0)
+        equal(#frame.extraRegions, 0)
+        equal(#ctx.messages, 0, "unavailable titles are normal, not filter errors")
+    end
+end)
+
+test("missing tooltip APIs or enum keep NPC names available without titles", function()
+    for _, missing in ipairs({ "C_TooltipInfo", "Enum" }) do
+        local ctx = Context()
+        ctx.env[missing] = nil
+        ctx.addon.SetOption("includeNPCs", true)
+        local _, frame = ctx:unit("nameplate1", { player = false, tooltip = NPCTooltip("Vendor") })
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(BarVisible(frame), 0)
+        equal(#frame.extraRegions, 0)
+    end
+end)
+
+test("NPC tooltip cache retries late data and invalidates on name changes and removal", function()
+    local ctx = Context()
+    ctx.addon.SetOption("includeNPCs", true)
+    local unit, frame = ctx:unit("nameplate1", { player = false })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(ctx.tooltipReads, 1)
+    for _ = 1, 5 do ctx:tick(); ctx:nativeNameUpdate(frame) end
+    equal(ctx.tooltipReads, 1, "unavailable titles are throttled")
+    unit.tooltip = NPCTooltip("First")
+    for _ = 1, 5 do ctx:tick() end
+    equal(ctx.tooltipReads, 2)
+    local label = frame.extraRegions[1]
+    equal(label.text, "<First>")
+    for _ = 1, 15 do ctx:tick(); ctx:nativeNameUpdate(frame) end
+    equal(ctx.tooltipReads, 2, "known title is cached for this plate lifetime")
+    unit.tooltip = NPCTooltip("Second")
+    ctx:emit("UNIT_NAME_UPDATE", "nameplate1")
+    equal(label.text, "<Second>")
+    ctx:emit("NAME_PLATE_UNIT_REMOVED", "nameplate1")
+    equal(label.shown, false)
+    ctx:unit("nameplate1", { player = false, tooltip = NPCTooltip("Third") }, frame)
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(label.text, "<Third>")
+end)
+
+test("NPC subtitle restores cleanly when pooled for a player, enemy or forbidden frame", function()
+    local ctx = Context()
+    ctx.addon.SetOption("includeNPCs", true)
+    ctx.addon.SetOption("showGuild", true)
+    local unit, frame, plate = ctx:unit("nameplate1", { player = false, tooltip = NPCTooltip("Vendor") })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    local label = frame.extraRegions[1]
+    unit.player, unit.guild = true, "Player Guild"
+    ctx:nativeNameUpdate(frame)
+    equal(label.text, "<Player Guild>")
+    unit.friendly = false
+    ctx:emit("UNIT_FACTION", "nameplate1")
+    equal(label.shown, false)
+    equal(BarVisible(frame), 1)
+    ctx:emit("NAME_PLATE_UNIT_REMOVED", "nameplate1")
+    local reads = ctx.tooltipReads
+    plate.forbidden, frame.forbidden = true, true
+    ctx:emit("FORBIDDEN_NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:tick()
+    equal(ctx.tooltipReads, reads)
+end)
+
+test("NPC CVar ownership survives reload, respects manual edits and defers in combat", function()
+    local ctx = Context()
+    ctx.combat = true
+    ctx.addon.SetOption("includeNPCs", true)
+    equal(ctx.cvars.nameplateShowFriendlyNpcs, "0")
+    ctx.combat = false
+    ctx:emit("PLAYER_REGEN_ENABLED")
+    equal(ctx.cvars.nameplateShowFriendlyNpcs, "1")
+    local reload = Context(ctx)
+    reload:emit("PLAYER_ENTERING_WORLD")
+    reload.combat = true
+    reload.addon.SetOption("includeNPCs", false)
+    equal(reload.cvars.nameplateShowFriendlyNpcs, "1")
+    reload.combat = false
+    reload:emit("PLAYER_REGEN_ENABLED")
+    equal(reload.cvars.nameplateShowFriendlyNpcs, "0")
+    reload.addon.SetOption("includeNPCs", true)
+    reload.cvars.nameplateShowFriendlyNpcs = "0"
+    local writes = #reload.writes
+    reload:command("off")
+    equal(reload.cvars.nameplateShowFriendlyNpcs, "0")
+    for index = writes + 1, #reload.writes do
+        assert(reload.writes[index] ~= "nameplateShowFriendlyNpcs", "manual edit overwritten")
+    end
+end)
+
+test("NPC preferences are translated, persist and return to safe defaults", function()
+    for _, locale in ipairs(clientLocales) do
+        local ctx = Context(nil, { locale = locale })
+        local L = ctx.addon.L
+        equal(ctx.env.FriendlyGroupCombatDB.includeNPCs, false)
+        ctx:click(L.UI_NPCS)
+        ctx:click(L.UI_NPC_BARS)
+        ctx:click(L.UI_NPC_TITLE)
+        local reload = Context(ctx, { locale = locale })
+        equal(reload.env.FriendlyGroupCombatDB.includeNPCs, true)
+        equal(reload.env.FriendlyGroupCombatDB.showNPCBars, true)
+        equal(reload.env.FriendlyGroupCombatDB.showNPCTitle, false)
+        reload:click(L.UI_DEFAULTS)
+        equal(reload.env.FriendlyGroupCombatDB.includeNPCs, false)
+        equal(reload.env.FriendlyGroupCombatDB.showNPCBars, false)
+        equal(reload.env.FriendlyGroupCombatDB.showNPCTitle, true)
+        reload:command("status")
+    end
+end)
+
+test("name-only NPCs use native selection colours and retain their vertex alpha", function()
+    local ctx = Context()
+    ctx.addon.SetOption("includeNPCs", true)
+    local unit, frame = ctx:unit("nameplate1", { player = false })
+    frame.name.vertexColor = { 1, 1, 1, 0.6 }
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(frame.name.vertexColor[1], 0)
+    equal(frame.name.vertexColor[2], 1)
+    equal(frame.name.vertexColor[3], 0)
+    equal(frame.name.vertexColor[4], 0.6)
+    ctx:nativeNameUpdate(frame)
+    equal(frame.name.vertexColor[1], 0, "hover keeps the native friendly colour")
+    unit.selectionColor = { 0.1, 0.8, 0.2 }
+    ctx:tick()
+    equal(frame.name.vertexColor[1], 0.1, "read the client's colour rather than hardcoding green")
+    equal(frame.name.vertexColor[2], 0.8)
+    ctx.addon.SetOption("npcNameColors", false)
+    equal(frame.name.vertexColor[1], 1, "restore latest native nameplate colour")
+    equal(BarVisible(frame), 0, "colour switch does not change NPC visibility")
+    ctx:nativeNameUpdate(frame)
+    equal(frame.name.vertexColor[1], 1)
+end)
+
+test("NPC colour is independent of player class colours and restores on full bars or off", function()
+    local ctx = Context()
+    ctx.addon.SetOption("includeNPCs", true)
+    ctx.addon.SetOption("classColorsOnly", false)
+    local _, frame = ctx:unit("nameplate1", { player = false })
+    frame.name.vertexColor = { 1, 1, 1, 1 }
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(frame.name.vertexColor[1], 0)
+    ctx.addon.SetOption("showNPCBars", true)
+    equal(frame.name.vertexColor[1], 1)
+    ctx.addon.SetOption("showNPCBars", false)
+    equal(frame.name.vertexColor[1], 0)
+    ctx:command("off")
+    equal(frame.name.vertexColor[1], 1)
+end)
+
+test("restricted, missing or malformed NPC selection colours preserve native name colours", function()
+    for _, color in ipairs({ SECRET, API_ERROR, false, { 0, SECRET, 0 }, { "0", 1, 0 }, { 0, 1 } }) do
+        local ctx = Context()
+        ctx.addon.SetOption("includeNPCs", true)
+        local _, frame = ctx:unit("nameplate1", { player = false, selectionColor = color })
+        frame.name.vertexColor = { 1, 1, 1, 1 }
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(frame.name.vertexColor[1], 1)
+        equal(BarVisible(frame), 0)
+    end
+    local ctx = Context()
+    ctx.env.UnitSelectionColor = nil
+    ctx.addon.SetOption("includeNPCs", true)
+    local _, frame = ctx:unit("nameplate1", { player = false })
+    frame.name.vertexColor = { 1, 1, 1, 1 }
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(frame.name.vertexColor[1], 1)
+end)
+
+test("NPC green is removed on hostility or frame reuse for players and minions", function()
+    local ctx = Context()
+    ctx.addon.SetOption("includeNPCs", true)
+    ctx.addon.SetOption("includeMinions", true)
+    local unit, frame = ctx:unit("nameplate1", { player = false })
+    frame.name.vertexColor = { 1, 1, 1, 1 }
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(frame.name.vertexColor[1], 0)
+    unit.friendly = false
+    ctx:emit("UNIT_FACTION", "nameplate1")
+    equal(frame.name.vertexColor[1], 1)
+    unit.friendly, unit.player, unit.class = true, true, "MAGE"
+    ctx:tick()
+    equal(frame.name.vertexColor[1], 0.25, "player uses class colour")
+    unit.player, unit.minion = false, true
+    ctx:nativeNameUpdate(frame)
+    equal(frame.name.vertexColor[1], 1, "minion keeps native nameplate colour")
+end)
+
+test("NPC colour preference is translated, saved and enabled by restore defaults", function()
+    for _, locale in ipairs(clientLocales) do
+        local ctx = Context(nil, { locale = locale })
+        equal(ctx.env.FriendlyGroupCombatDB.npcNameColors, true)
+        ctx:click(ctx.addon.L.UI_NPC_COLORS)
+        local reload = Context(ctx, { locale = locale })
+        equal(reload.env.FriendlyGroupCombatDB.npcNameColors, false)
+        reload:click(reload.addon.L.UI_DEFAULTS)
+        equal(reload.env.FriendlyGroupCombatDB.npcNameColors, true)
+    end
 end)
 
 print(string.format("%d/%d integration checks passed", passed, tests))

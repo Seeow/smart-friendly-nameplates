@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: MIT
 local _, addon = ...
+local L = addon.L
 local TITLE = "Smart Friendly Nameplates"
 local panel, category, content, scroll, state
 local checks, rows = {}, {}
@@ -36,7 +37,13 @@ local function Button(title, width, callback)
     button:SetSize(width, 24)
     button:SetText(title)
     button:SetScript("OnClick", callback)
-    buttonRow[#buttonRow + 1] = { button = button, width = width }
+    local label = button:GetFontString()
+    label:SetWordWrap(true)
+    buttonRow[#buttonRow + 1] = {
+        button = button,
+        label = label,
+        width = math.max(width, label:GetStringWidth() + 24),
+    }
     return button
 end
 
@@ -56,14 +63,20 @@ local function Layout()
             top = top + row.detail:GetStringHeight() + 20
         elseif row.buttons then
             local left = 24
-            local lineHeight = 24
+            local lineHeight = 0
             for _, entry in ipairs(row.buttons) do
-                if left > 24 and left + entry.width > width - 24 then
+                local buttonWidth = math.min(entry.width, math.max(32, width - 48))
+                if left > 24 and left + buttonWidth > width - 24 then
                     left = 24
                     top = top + lineHeight + 8
+                    lineHeight = 0
                 end
+                entry.label:SetWidth(math.max(1, buttonWidth - 24))
+                local height = math.max(24, entry.label:GetStringHeight() + 12)
+                entry.button:SetSize(buttonWidth, height)
                 entry.button:SetPoint("TOPLEFT", content, "TOPLEFT", left, -top)
-                left = left + entry.width + 12
+                left = left + buttonWidth + 12
+                lineHeight = math.max(lineHeight, height)
             end
             top = top + lineHeight + 16
         else
@@ -82,11 +95,11 @@ function addon.RefreshOptions()
     for key, check in pairs(checks) do check:SetChecked(options[key]) end
     -- Preferences remain editable while the master filter is off.
     if pending then
-        state:SetText("Game-setting changes are pending until combat ends. If they still cannot be applied, use Print status for details.")
+        state:SetText(L.UI_PENDING)
     elseif options.enabled then
-        state:SetText("Filter enabled. Changes apply immediately and are saved for this character.")
+        state:SetText(L.UI_ENABLED)
     else
-        state:SetText("Filter disabled. Previous game settings have been restored where still managed by the addon.")
+        state:SetText(L.UI_DISABLED)
     end
     Layout()
 end
@@ -113,31 +126,39 @@ function addon.RegisterOptions()
     end)
 
     Text("GameFontNormalLarge", TITLE .. " |cff888888v" .. addon.VERSION .. "|r")
-    Text("GameFontHighlightSmall", "Choose when friendly health bars stay visible. Any enabled condition can show a full bar; other eligible units show names only. Settings are saved per character.")
+    Text("GameFontHighlightSmall", L.UI_INTRO)
 
-    Checkbox("enabled", "Enable friendly nameplate filtering",
-        "Master switch for all filtering and selective class colours. Your other preferences are kept when this is off.")
-    Checkbox("showGroup", "Show health bars for group members",
-        "Keep full health bars for your party and raid, even out of combat.")
-    Checkbox("showCombat", "Show health bars for units in combat",
-        "Keep a full health bar while that unit is in combat, regardless of your own combat state.")
-    Checkbox("showTarget", "Show health bar for current target",
-        "Keep a full health bar for your selected friendly player or eligible minion, even if no other condition applies.")
-    Checkbox("includeMinions", "Apply filtering to friendly player minions",
-        "Apply the same conditions to friendly player pets, guardians and totems. Ordinary NPCs are unchanged.")
-    Checkbox("classColorsOnly", "Use class colours for names without health bars",
-        "Colour name-only players by class. Names with a visible health bar keep their normal colour. Applies while the filter is enabled.")
-    Checkbox("showGuild", "Show guild below name-only players",
-        "Display the player's guild below their name while the health bar is hidden. Only shown when guild information is available.")
+    Checkbox("enabled", L.UI_ENABLE,
+        L.UI_ENABLE_DESC)
+    Checkbox("showGroup", L.UI_GROUP,
+        L.UI_GROUP_DESC)
+    Checkbox("showCombat", L.UI_COMBAT,
+        L.UI_COMBAT_DESC)
+    Checkbox("showTarget", L.UI_TARGET,
+        L.UI_TARGET_DESC)
+    Checkbox("includeMinions", L.UI_MINIONS,
+        L.UI_MINIONS_DESC)
+    Checkbox("classColorsOnly", L.UI_COLORS,
+        L.UI_COLORS_DESC)
+    Checkbox("showGuild", L.UI_GUILD,
+        L.UI_GUILD_DESC)
+    Checkbox("includeNPCs", L.UI_NPCS,
+        L.UI_NPCS_DESC)
+    Checkbox("showNPCBars", L.UI_NPC_BARS,
+        L.UI_NPC_BARS_DESC)
+    Checkbox("showNPCTitle", L.UI_NPC_TITLE,
+        L.UI_NPC_TITLE_DESC)
+    Checkbox("npcNameColors", L.UI_NPC_COLORS,
+        L.UI_NPC_COLORS_DESC)
     state = Text("GameFontHighlightSmall", "")
 
     buttonRow = {}
     rows[#rows + 1] = { buttons = buttonRow }
-    Button("Restore defaults", 132, RestoreDefaults)
-    Button("Print status", 112, function() addon.PrintStatus() end)
-    Button("Inspect target", 120, function() addon.DebugTarget() end)
-    Text("GameFontHighlightSmall", "Diagnostics are printed in chat. Select a friendly player or minion before using Inspect target.")
-    Text("GameFontDisableSmall", "Protected friendly nameplates in dungeons and raids remain under Blizzard's control.")
+    Button(L.UI_DEFAULTS, 132, RestoreDefaults)
+    Button(L.UI_STATUS, 112, function() addon.PrintStatus() end)
+    Button(L.UI_INSPECT, 120, function() addon.DebugTarget() end)
+    Text("GameFontHighlightSmall", L.UI_DIAGNOSTICS)
+    Text("GameFontDisableSmall", L.UI_RESTRICTIONS)
 
     panel.OnRefresh = addon.RefreshOptions
     panel.OnDefault = RestoreDefaults

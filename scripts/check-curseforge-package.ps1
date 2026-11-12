@@ -14,7 +14,7 @@ if ($directories.Count -ne 1 -or $directories[0].Name -cne $addonName) {
 if (@(Get-ChildItem -LiteralPath $addonRoot -Directory -Force).Count -ne 0) {
     throw 'The addon folder must be flat, without a nested wrapper or development folders.'
 }
-$expectedFiles = @("$addonName.toc", "$addonName.lua", 'Options.lua', 'README.md', 'LICENSE')
+$expectedFiles = @("$addonName.toc", "$addonName.lua", 'Options.lua', 'Localization.lua', 'LocalesEurope.lua', 'LocalesAsia.lua', 'README.md', 'LICENSE')
 foreach ($name in $expectedFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $addonRoot $name) -PathType Leaf)) {
         throw "Missing package file: $addonName/$name"

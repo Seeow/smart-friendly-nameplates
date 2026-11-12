@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.1.13
+
+- Use the game's native selection colour for name-only friendly NPCs (green),
+  with an independent option enabled by default. Preserve vertex alpha and
+  restore native nameplate colours on full bars, disabling and frame reuse.
+- Reapply NPC colours immediately after native name updates, including hover.
+- Leave names unchanged when selection colour information is unavailable or
+  protected. Player class colours and minion names retain their existing rules.
+
+## 0.1.12
+
+- Add friendly NPC support with a separate choice of native health bars or
+  names only, independent of player/minion group, combat and target rules.
+- Add NPC titles beneath name-only NPCs, using available localized tooltip
+  text. Reject protected data and non-title line types; cache per plate lifetime
+  and retry missing data without scanning every update.
+- Keep NPC support disabled by default. Save and restore the native friendly
+  NPC nameplate setting, deferring protected changes until combat ends.
+- Translate all new settings and diagnostics into every supported language.
+
+## 0.1.11
+
+- Automatically localize the in-game panel, chat messages, warnings, diagnostics
+  and AddOns-list descriptions using the client's display language.
+- Add French, German, Spanish (Spain and Latin America), Italian, Brazilian
+  Portuguese, Russian, Korean, Simplified Chinese and Traditional Chinese.
+- Fall back to English for unknown locales or missing translation keys. Keep
+  addon branding, slash commands and technical diagnostic identifiers stable.
+- Measure and wrap translated button labels to fit narrower options panels.
+
 ## 0.1.10
 
 - Remove the experimental name-width slider and all name geometry overrides.

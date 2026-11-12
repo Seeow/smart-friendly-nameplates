@@ -1,10 +1,23 @@
 ## Interface: 16001
 ## Title: Smart Friendly Nameplates
-## Notes: Filter friendly player and minion health bars by group or combat. Configure with /sfn.
+## Notes: Filter friendly player and minion health bars by group, combat or target. Configure with /sfn.
+## Notes-frFR: Filtre les barres de vie des joueurs amicaux et de leurs serviteurs selon le groupe, le combat ou la cible. Configuration : /sfn.
+## Notes-deDE: Filtert die Lebensbalken verbündeter Spieler und ihrer Diener nach Gruppe, Kampf oder Ziel. Einstellungen: /sfn.
+## Notes-esES: Filtra las barras de salud de jugadores amistosos y sus esbirros según el grupo, el combate o el objetivo. Configuración: /sfn.
+## Notes-esMX: Filtra las barras de salud de jugadores amistosos y sus esbirros según el grupo, el combate o el objetivo. Configuración: /sfn.
+## Notes-itIT: Filtra le barre della salute di giocatori alleati e servitori in base a gruppo, combattimento o bersaglio. Configurazione: /sfn.
+## Notes-ptBR: Filtra as barras de vida de jogadores aliados e seus lacaios por grupo, combate ou alvo. Configuração: /sfn.
+## Notes-ruRU: Фильтрует полосы здоровья дружественных игроков и их прислужников по группе, бою или цели. Настройка: /sfn.
+## Notes-koKR: 파티, 전투 또는 대상 여부에 따라 아군 플레이어와 소환수의 생명력 바를 표시합니다. 설정: /sfn.
+## Notes-zhCN: 根据队伍、战斗或目标状态筛选友方玩家及其仆从的血条。输入 /sfn 进行设置。
+## Notes-zhTW: 依據隊伍、戰鬥或目標狀態篩選友方玩家及其僕從的生命條。輸入 /sfn 進行設定。
 ## Author: Seeow
-## Version: 0.1.10
+## Version: 0.1.13
 ## X-Curse-Project-ID: 1798982
 ## SavedVariablesPerCharacter: FriendlyGroupCombatDB
 
+Localization.lua
+LocalesEurope.lua
+LocalesAsia.lua
 FriendlyGroupCombat.lua
 Options.lua

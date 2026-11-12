@@ -19,9 +19,16 @@ conditions off shows names only for all eligible units while the master
 filter is enabled.
 
 Names return to their normal colour while their health bar is visible. Enemy
-units, ordinary NPCs, and your personal resource display are left alone. An
+units and your personal resource display are left alone. An
 optional setting extends the same conditions to friendly players' minions:
 pets, guardians and totems. Minion names keep their native colours.
+
+Friendly NPC support has its own display mode: native health bars or names
+only, with NPC titles (for example, Weaponsmith) beneath the names when available.
+Name-only NPCs use the game's selection colour (green for friendly NPCs), with
+an independent switch enabled by default. Full bars retain normal name colours.
+The player/minion visibility conditions do
+not change this NPC mode. NPC support is disabled by default.
 
 The addon uses Blizzard's existing nameplate text. It does not recreate the
 game engine's native 3D overhead names.
@@ -34,8 +41,11 @@ game engine's native 3D overhead names.
   remain under Blizzard's control. Per-player filtering and colouring cannot
   be applied to those frames.
 - Other WoW clients and nameplate addons are not currently supported.
-- Addon text is in English. Names and other text supplied by Blizzard follow
-  the game's language settings.
+- Addon text automatically follows the game's display language: English,
+  French, German, Spanish (Spain and Latin America), Italian, Brazilian
+  Portuguese, Russian, Korean, Simplified Chinese and Traditional Chinese.
+  Missing translations fall back to English. The addon name, `/sfn` commands
+  and technical diagnostic identifiers remain unchanged.
 
 ## Install
 
@@ -77,14 +87,26 @@ Open **Options → Add-ons → Smart Friendly Nameplates**, or type **`/sfn`**.
   to name-only players while filtering is enabled.
 - **Show guild below name-only players**: display the player's guild beneath
   their visible name, when guild information is available. Hide it with full bars.
+- **Include friendly NPCs**: enable native friendly NPC nameplates and manage
+  their display separately from players and minions.
+- **Show health bars for friendly NPCs**: keep native bars when checked; use
+  names only when unchecked. Independent of group, combat and target conditions.
+- **Show title below name-only NPCs**: display the NPC's localized title beneath
+  its visible name, when available. Requires NPC support and hidden health bars.
+- **Use native colours for name-only NPCs**: use the game's selection colour,
+  green for friendly NPCs, while their health bar is hidden. Enabled by default.
 - **Restore defaults**: enable filtering, group/combat conditions and class
-  colours; disable minions, target and guild options.
+  colours; disable minions, target, guild and NPC support. NPC preferences default
+  to names only with titles when support is subsequently enabled.
 - **Print status** and **Inspect target**: print diagnostics in chat.
 
 Changes apply immediately and are saved per character. Changes to protected
 game settings wait until combat ends; the panel shows when changes are pending.
 The panel scrolls to keep every option accessible and shares saved preferences
 with slash commands.
+Labels, descriptions, chat messages, warnings and diagnostics follow `GetLocale()`.
+There is no separate language preference to keep in sync with the game. Translated
+button labels wrap and the panel adjusts its layout to fit them.
 
 ## Commands
 
@@ -110,6 +132,7 @@ Previous values are saved per character, including across `/reload`.
 Minion support also enables Blizzard's friendly player minion nameplates and
 restores that setting when disabled. Native minion subtype and distance rules
 still apply.
+NPC support likewise manages and restores `nameplateShowFriendlyNpcs`.
 
 - Game-setting changes requested during combat wait until combat ends.
 - Other players' combat and group changes are checked about every 0.2 seconds.
@@ -119,6 +142,11 @@ still apply.
 - Guild labels use available, non-secret guild text only. Missing information
   displays no guild line. Guild labels follow native name visibility and do not
   appear for minions or ordinary NPCs.
+- NPC titles use the expected title line in `C_TooltipInfo.GetUnit`, accounting
+  for colourblind mode. There is no dedicated title API; this position-based
+  extraction must be verified in game. Missing or protected text and typed
+  level/type/quest lines produce no subtitle. A title is cached until the
+  nameplate is removed or its name changes; missing data is retried every 2 s.
 - Unknown or secret group/combat information leaves the full nameplate visible.
 - Only enabled conditions are checked. A disabled condition's restricted data
   does not affect visibility.
@@ -174,6 +202,8 @@ and the first Lua error if present. Target the affected player and use
 
 - [Forever unit API](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_APIDocumentationGenerated/UnitDocumentation.lua)
 - [Blizzard nameplate implementation](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_NamePlates/Blizzard_NamePlates.lua)
+- [Forever tooltip API](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_APIDocumentationGenerated/TooltipInfoDocumentation.lua)
+- [NPC title extraction used by ElvUI](https://github.com/tukui-org/ElvUI/blob/main/ElvUI/Game/Shared/Tags/API.lua)
 - [Friendly frame restrictions documented by Dynamic Display Nameplate](https://github.com/rubens-lopes/DynamicDisplayNameplate#inside-dungeons-and-raids)
 
 This is an independent addon; it does not depend on Dynamic Display Nameplate.

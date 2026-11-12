@@ -1,7 +1,8 @@
 -- SPDX-License-Identifier: MIT
 -- WoW Forever 1.60.1. No dependency; only ordinary, accessible nameplates.
 local ADDON_NAME, addon = ...
-local VERSION = "0.1.10"
+local L = addon.L
+local VERSION = "0.1.13"
 addon.VERSION = VERSION
 local DEFAULTS = {
     enabled = true,
@@ -11,6 +12,10 @@ local DEFAULTS = {
     showTarget = false,
     includeMinions = false,
     showGuild = false,
+    includeNPCs = false,
+    showNPCBars = false,
+    showNPCTitle = true,
+    npcNameColors = true,
 }
 addon.DEFAULTS = DEFAULTS
 local PREFIX = "|cff66ccffSmart Friendly Nameplates:|r "
@@ -20,6 +25,7 @@ local CVARS = {
     { name = "nameplateShowOnlyNameForFriendlyPlayerUnits", value = "0" },
     { name = "nameplateUseClassColorForFriendlyPlayerUnitNames", value = "0", option = "classColorsOnly" },
     { name = "nameplateShowFriendlyPlayerMinions", value = "1", option = "includeMinions" },
+    { name = "nameplateShowFriendlyNpcs", value = "1", option = "includeNPCs" },
 }
 
 local driver = CreateFrame("Frame")
@@ -27,10 +33,11 @@ local db
 local plates, forbidden = {}, {}
 local nameOnlyFrames = setmetatable({}, { __mode = "k" })
 local nameColors = setmetatable({}, { __mode = "k" })
-local guildLabels = setmetatable({}, { __mode = "k" })
+local subtitleLabels = setmetatable({}, { __mode = "k" })
 local warnings = {}
 local pendingCVars = false
 local elapsedSinceUpdate = 0
+local updateTime = 0
 local lastError
 local nameHookInstalled = false
 
@@ -92,7 +99,7 @@ local function RestoreNameColor(name)
             local color = saved.before
             local ok = pcall(name.SetVertexColor, name, color[1], color[2], color[3], color[4])
             if not ok then
-                Warn("color", "The client refused to restore a name colour.")
+                Warn("color", L.ERROR_RESTORE_COLOR)
                 return
             end
         end
@@ -100,10 +107,32 @@ local function RestoreNameColor(name)
     nameColors[name] = nil
 end
 
+-- NPCs must be positively distinguished from player minions. Unknown identity
+-- leaves the native display alone, as it does for unknown player information.
+local function IsOrdinaryNPC(unit)
+    return Flag(UnitIsPlayer, unit) == false and Flag(UnitIsMinion, unit) == false
+end
+
+local function NPCNameColor(unit)
+    if type(UnitSelectionColor) ~= "function" then return end
+    local ok, r, g, b = pcall(UnitSelectionColor, unit)
+    if not ok then return end
+    local color = { r, g, b }
+    for index = 1, 3 do
+        local value = color[index]
+        if (issecretvalue and issecretvalue(value)) or type(value) ~= "number" then return end
+    end
+    return { r = r, g = g, b = b }
+end
+
 local function ColorName(name, unit)
-    if not db.classColorsOnly or Flag(UnitIsPlayer, unit) ~= true then return RestoreNameColor(name) end
-    local class, known = Read(UnitClassBase, unit)
-    local color = known and type(class) == "string" and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+    local color
+    if db.classColorsOnly and Flag(UnitIsPlayer, unit) == true then
+        local class, known = Read(UnitClassBase, unit)
+        color = known and type(class) == "string" and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+    elseif db.includeNPCs and db.npcNameColors and IsOrdinaryNPC(unit) then
+        color = NPCNameColor(unit)
+    end
     if not color then return RestoreNameColor(name) end
     local current = VertexColor(name)
     if not current then return end
@@ -118,25 +147,59 @@ local function ColorName(name, unit)
     name:SetVertexColor(saved.applied[1], saved.applied[2], saved.applied[3], saved.applied[4])
 end
 
-local function HideGuild(frame)
-    local label = guildLabels[frame]
+local function Field(object, key)
+    return Read(function() return object[key] end)
+end
+
+local function NPCTitle(frame, unit)
+    local record = plates[unit]
+    if not record or record.frame ~= frame then return end
+    if record.npcTitle then return record.npcTitle end
+    if record.nextTitleRead and updateTime < record.nextTitleRead then return end
+    -- Retry unavailable data without scanning every name update or polling tick.
+    record.nextTitleRead = updateTime + 2
+    local types = Enum and Enum.TooltipDataLineType
+    if not types or not C_TooltipInfo then return end
+    local data = Read(C_TooltipInfo.GetUnit, unit)
+    if type(data) ~= "table" then return end
+    local lines = Field(data, "lines")
+    if type(lines) ~= "table" then return end
+    local first = Field(lines, 1)
+    if type(first) ~= "table" or Field(first, "type") ~= types.UnitName then return end
+    local colorblind = Read(C_CVar.GetCVar, "colorblindmode")
+    if colorblind ~= "0" and colorblind ~= "1" then return end
+    -- In colourblind mode the native tooltip inserts a reaction line after
+    -- the name. Titles are untyped; a level/type/quest line is never a title.
+    local line = Field(lines, colorblind == "1" and 3 or 2)
+    if type(line) ~= "table" or Field(line, "type") ~= types.None then return end
+    local text = Field(line, "leftText")
+    if type(text) ~= "string" or text == "" then return end
+    record.npcTitle = text
+    return text
+end
+
+local function HideSubtitle(frame)
+    local label = subtitleLabels[frame]
     if Accessible(label) then
         local ok = pcall(function() label:SetText(""); label:Hide() end)
-        if not ok then Warn("guild", "The client refused to hide a guild label.") end
+        if not ok then Warn("subtitle", L.ERROR_HIDE_LABEL) end
     end
 end
 
-local function ShowGuild(frame, unit)
-    if not db.showGuild or Flag(UnitIsPlayer, unit) ~= true then return HideGuild(frame) end
-    -- The guild text is a sibling region, so it must follow native name
-    -- visibility explicitly rather than displaying a guild with no name.
-    if Flag(frame.name.IsShown, frame.name) ~= true then return HideGuild(frame) end
-    local guild, known = Read(GetGuildInfo, unit)
-    if not known or type(guild) ~= "string" or guild == "" then return HideGuild(frame) end
-    local label = guildLabels[frame]
+local function ShowSubtitle(frame, unit)
+    -- This sibling region must follow native name visibility explicitly.
+    if Flag(frame.name.IsShown, frame.name) ~= true then return HideSubtitle(frame) end
+    local text
+    if db.showGuild and Flag(UnitIsPlayer, unit) == true then
+        text = Read(GetGuildInfo, unit)
+    elseif db.includeNPCs and db.showNPCTitle and IsOrdinaryNPC(unit) then
+        text = NPCTitle(frame, unit)
+    end
+    if type(text) ~= "string" or text == "" then return HideSubtitle(frame) end
+    local label = subtitleLabels[frame]
     if not label then
         label = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        guildLabels[frame] = label
+        subtitleLabels[frame] = label
         label:SetTextColor(0.7, 0.85, 0.7)
         label:SetWordWrap(false)
     end
@@ -144,7 +207,7 @@ local function ShowGuild(frame, unit)
     local edge = justify == "LEFT" and "LEFT" or (justify == "RIGHT" and "RIGHT" or "")
     label:ClearAllPoints()
     label:SetPoint("TOP" .. edge, frame.name, "BOTTOM" .. edge, 0, -2)
-    label:SetText("<" .. guild .. ">")
+    label:SetText("<" .. text .. ">")
     label:Show()
 end
 
@@ -152,12 +215,12 @@ local function RestoreNameVisuals(frame)
     if frame.name then
         RestoreNameColor(frame.name)
     end
-    HideGuild(frame)
+    HideSubtitle(frame)
 end
 
 local function UpdateNameVisuals(frame, unit)
     ColorName(frame.name, unit)
-    ShowGuild(frame, unit)
+    ShowSubtitle(frame, unit)
 end
 
 local function RestoreFrame(frame)
@@ -169,7 +232,7 @@ local function RestoreFrame(frame)
             if Accessible(piece) then
                 local ok = pcall(piece.SetAlpha, piece, alpha)
                 if not ok then
-                    Warn("nameOnly", "The client refused to restore a visual element. Use /sfn status for diagnostics.")
+                    Warn("nameOnly", L.ERROR_RESTORE_VISUAL)
                     return
                 end
             end
@@ -190,7 +253,7 @@ local function ShowNameOnly(frame, unit)
     -- Keep ALL addon bookkeeping outside Blizzard frames. Never read native
     -- health-bar state or pass health values through Blizzard's Lua helpers.
     local function Fade(piece)
-        if piece == frame.name or piece == guildLabels[frame] or not Accessible(piece) then return end
+        if piece == frame.name or piece == subtitleLabels[frame] or not Accessible(piece) then return end
         if before[piece] == nil then
             local alpha, known = Read(piece.GetAlpha, piece)
             if not known or type(alpha) ~= "number" then return end
@@ -239,7 +302,13 @@ local function ShouldShowNameOnly(unit)
 
     local player = Flag(UnitIsPlayer, unit)
     if player ~= true then
-        if player ~= false or not db.includeMinions or Flag(UnitIsMinion, unit) ~= true then return false end
+        if player ~= false then return false end
+        local minion = Flag(UnitIsMinion, unit)
+        if minion == false then
+            -- NPC display is an explicit mode, independent of player rules.
+            return db.includeNPCs and not db.showNPCBars
+        end
+        if minion ~= true or not db.includeMinions then return false end
     end
 
     if db.showTarget and Flag(UnitIsUnit, unit, "target") ~= false then return false end
@@ -279,7 +348,7 @@ local function InstallNameHook()
             end
         end)
         if not recoloured then
-            Warn("colorHook", "The client refused to resynchronise a name colour.")
+            Warn("colorHook", L.ERROR_COLOR_SYNC)
         end
     end)
     nameHookInstalled = ok
@@ -293,6 +362,7 @@ local function UpdatePlate(unit)
     if record.frame ~= frame then
         if record.frame then RestoreFrame(record.frame) end
         record.frame = frame
+        record.npcTitle, record.nextTitleRead = nil, nil
     end
     if not Accessible(frame) or not frame.unit then return end
 
@@ -301,8 +371,8 @@ local function UpdatePlate(unit)
         if not ok then
             RestoreFrame(frame)
             record.failed = true -- Do not retry a failing operation every 0.2 s.
-            local detail = (issecretvalue and issecretvalue(err)) and "protected error" or tostring(err)
-            Warn("nameOnly", "Filtering paused for this nameplate: " .. detail)
+            local detail = (issecretvalue and issecretvalue(err)) and L.PROTECTED_ERROR or tostring(err)
+            Warn("nameOnly", string.format(L.FILTER_PAUSED, detail))
         end
     else
         RestoreFrame(frame)
@@ -351,7 +421,7 @@ local function WriteValue(name, value)
     local ok, result = pcall(C_CVar.SetCVar, name, value)
     local actual = GetValue(name)
     if not ok or result == false or actual ~= value then
-        Warn(name, "Could not change " .. name .. ". Check /sfn status out of combat.")
+        Warn(name, string.format(L.ERROR_SET_CVAR, name))
         return false
     end
     return true
@@ -393,7 +463,7 @@ local function ApplyCVars()
                 end
             end
         elseif wanted then
-            Warn(name, "Setting unavailable on this client: " .. name .. ".")
+            Warn(name, string.format(L.ERROR_CVAR_UNAVAILABLE, name))
         end
     end
     RefreshOptions()
@@ -405,6 +475,9 @@ local function SetOption(key, value)
     if DEFAULTS[key] == nil then return end
     if type(value) ~= "boolean" then return end
     db[key] = value
+    if key == "includeNPCs" or key == "showNPCTitle" then
+        for _, record in pairs(plates) do record.npcTitle, record.nextTitleRead = nil, nil end
+    end
     if not db.enabled then RestoreAll() end
     if not db.classColorsOnly then
         for name in pairs(nameColors) do RestoreNameColor(name) end
@@ -427,46 +500,43 @@ end
 
 local function Status()
     local version, build, _, interface = GetBuildInfo()
-    Say("v" .. VERSION .. " | filter " .. (db.enabled and "enabled" or "disabled")
-        .. " | client " .. version .. " (" .. build .. "), interface " .. interface)
-    Say("Tracked nameplates: " .. Count(plates) .. "; name only: " .. Count(nameOnlyFrames)
-        .. "; protected nameplates reported: " .. Count(forbidden) .. ".")
-    Say("Class colours on name-only players: " .. (db.classColorsOnly and "yes" or "no") .. ".")
-    Say("Guild labels on name-only players: " .. (db.showGuild and "yes" or "no") .. ".")
-    Say("Show bars: group=" .. (db.showGroup and "yes" or "no")
-        .. ", in combat=" .. (db.showCombat and "yes" or "no")
-        .. ", current target=" .. (db.showTarget and "yes" or "no")
-        .. "; include minions=" .. (db.includeMinions and "yes" or "no") .. ".")
+    Say(string.format(L.STATUS_HEADER, VERSION, db.enabled and L.VALUE_ENABLED or L.VALUE_DISABLED,
+        version, build, interface))
+    Say(string.format(L.STATUS_COUNTS, Count(plates), Count(nameOnlyFrames), Count(forbidden)))
+    Say(string.format(L.STATUS_COLORS, db.classColorsOnly and L.VALUE_YES or L.VALUE_NO))
+    Say(string.format(L.STATUS_GUILD, db.showGuild and L.VALUE_YES or L.VALUE_NO))
+    Say(string.format(L.STATUS_NPCS, db.includeNPCs and L.VALUE_YES or L.VALUE_NO,
+        db.showNPCBars and L.VALUE_YES or L.VALUE_NO, db.showNPCTitle and L.VALUE_YES or L.VALUE_NO))
+    Say(string.format(L.STATUS_RULES, db.showGroup and L.VALUE_YES or L.VALUE_NO,
+        db.showCombat and L.VALUE_YES or L.VALUE_NO, db.showTarget and L.VALUE_YES or L.VALUE_NO,
+        db.includeMinions and L.VALUE_YES or L.VALUE_NO))
     for _, setting in ipairs(CVARS) do
         local value = GetValue(setting.name)
-        Say(setting.name .. " = " .. tostring(value or "unavailable"))
+        Say(string.format(L.STATUS_CVAR, setting.name, tostring(value or L.VALUE_UNAVAILABLE)))
     end
-    if pendingCVars then Say("Pending settings: leave combat, then use /sfn on or /sfn off if needed.") end
-    if lastError then Say("Last issue: " .. lastError) end
-    Say("Protected friendly nameplates in dungeons/raids remain under Blizzard's control.")
+    if pendingCVars then Say(L.STATUS_PENDING) end
+    if lastError then Say(string.format(L.STATUS_LAST_ERROR, lastError)) end
+    Say(L.UI_RESTRICTIONS)
 end
 
 local function DescribeFlag(fn, ...)
     local value = Flag(fn, ...)
-    if value == nil then return "unavailable" end
-    return value and "yes" or "no"
+    if value == nil then return L.VALUE_UNAVAILABLE end
+    return value and L.VALUE_YES or L.VALUE_NO
 end
 
 local function DebugTarget()
     if Flag(UnitExists, "target") ~= true then
-        Say("Target a friendly player or minion, then use /sfn debug.")
+        Say(L.TARGET_PROMPT)
         return
     end
-    Say("Target: player=" .. DescribeFlag(UnitIsPlayer, "target")
-        .. ", friendly=" .. DescribeFlag(UnitIsFriend, "player", "target")
-        .. ", party=" .. DescribeFlag(UnitInParty, "target")
-        .. ", raid=" .. DescribeFlag(UnitInRaid, "target")
-        .. ", minion=" .. DescribeFlag(UnitIsMinion, "target")
-        .. ", player/pet in party=" .. DescribeFlag(UnitPlayerOrPetInParty, "target")
-        .. ", player/pet in raid=" .. DescribeFlag(UnitPlayerOrPetInRaid, "target")
-        .. ", their combat=" .. DescribeFlag(UnitAffectingCombat, "target") .. ".")
-    Say("Target display: " .. (ShouldShowNameOnly("target") and "name only" or "normal display")
-        .. " (when an accessible nameplate exists).")
+    Say(string.format(L.TARGET_FLAGS, DescribeFlag(UnitIsPlayer, "target"),
+        DescribeFlag(UnitIsFriend, "player", "target"), DescribeFlag(UnitInParty, "target"),
+        DescribeFlag(UnitInRaid, "target"), DescribeFlag(UnitIsMinion, "target"),
+        DescribeFlag(UnitPlayerOrPetInParty, "target"), DescribeFlag(UnitPlayerOrPetInRaid, "target"),
+        DescribeFlag(UnitAffectingCombat, "target")))
+    Say(string.format(L.TARGET_DISPLAY,
+        ShouldShowNameOnly("target") and L.VALUE_NAME_ONLY or L.VALUE_NORMAL_DISPLAY))
 end
 
 addon.PrintStatus = Status
@@ -478,25 +548,25 @@ SlashCmdList.FRIENDLYGROUPCOMBAT = function(input)
     local command, argument = (input or ""):lower():match("^%s*(%S*)%s*(%S*)")
     if command == "on" or command == "off" then
         SetOption("enabled", command == "on")
-        Say(db.enabled and "Filter enabled. Configure visibility rules in /sfn options."
-            or "Filter disabled; restoring previous settings.")
-        if pendingCVars then Say("Game-setting changes will wait until combat ends.") end
+        Say(db.enabled and L.CMD_FILTER_ON
+            or L.CMD_FILTER_OFF)
+        if pendingCVars then Say(L.CMD_PENDING) end
     elseif command == "colors" and (argument == "on" or argument == "off") then
         SetOption("classColorsOnly", argument == "on")
-        Say(db.classColorsOnly and "Class colours enabled only for name-only players."
-            or "Native colours restored.")
+        Say(db.classColorsOnly and L.CMD_COLORS_ON
+            or L.CMD_COLORS_OFF)
     elseif command == "status" then
         Status()
     elseif command == "debug" then
         DebugTarget()
     elseif command == "" or command == "options" then
         if InCombatLockdown() then
-            Say("Open Options > Add-ons after leaving combat.")
+            Say(L.CMD_OPEN_COMBAT)
         elseif not addon.OpenOptions or not addon.OpenOptions() then
-            Say("Find Smart Friendly Nameplates in Options > Add-ons.")
+            Say(L.CMD_FIND_OPTIONS)
         end
     else
-        Say("/sfn opens options. Commands: on | off | status | debug | colors on | colors off. Enabled by default.")
+        Say(L.CMD_HELP)
     end
 end
 
@@ -530,6 +600,7 @@ driver:SetScript("OnEvent", function(_, event, unit)
         RemovePlate(unit)
         forbidden[unit] = true -- No request for the forbidden frame, even for diagnostics.
     elseif event == "UNIT_FLAGS" or event == "UNIT_FACTION" or event == "UNIT_NAME_UPDATE" then
+        if plates[unit] then plates[unit].npcTitle, plates[unit].nextTitleRead = nil, nil end
         if plates[unit] then UpdatePlate(unit) else UpdateAll() end
     else
         UpdateAll()
@@ -537,6 +608,7 @@ driver:SetScript("OnEvent", function(_, event, unit)
 end)
 
 driver:SetScript("OnUpdate", function(_, elapsed)
+    updateTime = updateTime + elapsed
     if not db or not db.enabled or not next(plates) then return end
     elapsedSinceUpdate = elapsedSinceUpdate + elapsed
     if elapsedSinceUpdate < INTERVAL then return end
