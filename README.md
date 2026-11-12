@@ -76,10 +76,14 @@ no prior visit to the game's nameplate settings is required.
 ## In-game options
 
 Open **Options → Add-ons → Smart Friendly Nameplates**, or type **`/sfn`**.
-The scrollable panel groups profiles, presets, player rules, minions, NPCs,
+The scrollable panel groups profiles, player rules, minions, NPCs,
 appearance and diagnostics. A summary shows which player conditions currently
 keep bars visible. Preferences whose prerequisites are off are dimmed and
 explained; they remain editable for later use.
+Settings use the game's two-column layout: labels on the left, controls on the
+right, section headings and a highlight on hover. Hover a row or its control for
+the description and any prerequisites. Click a checkbox's label or row to toggle
+it. The general Restore defaults button is at the top of the panel.
 
 - **Enable friendly nameplate filtering**: master switch. Other preferences are
   kept when it is off.
@@ -110,8 +114,10 @@ explained; they remain editable for later use.
 - **Use native colours for name-only NPCs**: use the game's selection colour,
   green for friendly NPCs, while their health bar is hidden. Enabled by default.
 - **Subtitle appearance**: choose font size (8–24, default 12), gap below the
-  name (0–12, default 2), red/green/blue colour components (0–1, defaults
-  0.7/0.85/0.7), and whether to wrap the text in `<…>` (on by default). These
+  name (0–12, default 2), colour using the game's native colour picker, and
+  whether to wrap the text in `<…>` (on by default). Click the colour swatch
+  to preview changes live; Cancel restores the previous colour. The adjacent
+  **Default** button resets only the colour (RGB 0.7/0.85/0.7). These
   controls affect the addon's guild and NPC-title subtitles, not native names.
 - **Restore defaults**: enable filtering, group/combat conditions and class
   colours; disable minions, target/focus/mouseover rules, guild and NPC support.
@@ -136,21 +142,6 @@ with slash commands.
 Labels, descriptions, chat messages, warnings and diagnostics follow `GetLocale()`.
 There is no separate language preference to keep in sync with the game. Translated
 button labels wrap and the panel adjusts its layout to fit them.
-
-### Presets
-
-Preset buttons apply a complete visibility setup to the active profile in one
-update. They are optional; existing characters keep their preferences until a
-preset is selected.
-
-- **Minimalist**: names only for friendly players.
-- **Group**: full bars for party/raid members, names only for other players.
-- **Group and combat**: the default player visibility rules.
-- **Exploration**: names-only friendly NPCs with their titles, alongside the
-  default player visibility rules.
-
-Focus, mouseover and the separate NPC-target exception remain opt-in. Subtitle
-appearance is controlled separately from these visibility presets.
 
 ## Profiles
 

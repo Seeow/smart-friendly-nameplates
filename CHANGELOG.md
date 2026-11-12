@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+- Match the game's settings presentation with aligned label/control columns,
+  compact highlighted rows, hover descriptions beside the controls and a
+  top-level defaults button.
+- Remove visibility presets from the options panel.
+- Replace the three subtitle RGB sliders with the game's native colour picker,
+  including live preview, cancellation and a colour-only Default button.
+
 ## 0.2.0
 
 - Skip unchanged alpha, name-colour and subtitle writes while retaining periodic

@@ -54,6 +54,7 @@ local function Context(previous, options)
             self.point = { ... }
         end
         function widget:ClearAllPoints() self.point = nil end
+        function widget:SetAllPoints(frame) self.allPoints = frame end
         function widget:SetSize(width, height) self.width, self.height = width, height end
         function widget:SetWidth(width) self.width = width end
         function widget:GetWidth() return self.width or 500 end
@@ -76,6 +77,7 @@ local function Context(previous, options)
             self.visualWrites.color = self.visualWrites.color + 1
             self.textColor = { r, g, b, a }
         end
+        function widget:SetColorTexture(...) self.colorTexture = { ... } end
         function widget:SetWordWrap() end
         function widget:IsForbidden() return false end
         function widget:GetAlpha() return self.alpha end
@@ -129,12 +131,16 @@ local function Context(previous, options)
             if self.scripts.OnShow then self.scripts.OnShow(self) end
         end
         function widget:SetScript(kind, fn) self.scripts[kind] = fn end
+        function widget:Click()
+            if self.kind == "CheckButton" then self.checked = not self.checked end
+            if self.scripts.OnClick then self.scripts.OnClick(self) end
+        end
         ctx.widgets[#ctx.widgets + 1] = widget
         return widget
     end
     env.CreateFrame = function(kind, name, parent, template)
         local frame = Widget()
-        frame.kind, frame.template = kind, template
+        frame.kind, frame.template, frame.parent = kind, template, parent
         function frame:GetFontString()
             self.fontString = self.fontString or Widget()
             self.fontString.text = self.text
@@ -145,11 +151,23 @@ local function Context(previous, options)
         if template == "BasicFrameTemplateWithInset" then frame.TitleText = Widget() end
         if name then env[name] = frame end
         function frame:CreateFontString() return Widget() end
+        function frame:CreateTexture()
+            local texture = Widget()
+            texture.parent = self
+            return texture
+        end
         function frame:RegisterEvent(event) self.events[event] = true end
         function frame:UnregisterEvent(event) self.events[event] = nil end
         if not ctx.driver then ctx.driver = frame end
         return frame
     end
+    env.GameTooltip = Widget()
+    function env.GameTooltip:SetOwner(owner, anchor) self.owner, self.anchor = owner, anchor; self.lines = {} end
+    function env.GameTooltip:SetText(text, r, g, b, alpha, wrap)
+        assert(type(alpha) == "number", "tooltip alpha must be numeric")
+        self.text, self.wrap = text, wrap
+    end
+    function env.GameTooltip:AddLine(text) self.lines[#self.lines + 1] = text end
     local settings = {
         RegisterCanvasLayoutCategory = function(panel, title)
             local category = { panel = panel, name = title }
@@ -1676,13 +1694,77 @@ test("translated buttons fit a narrow panel and can wrap onto more than one line
             if widget.kind == "ScrollFrame" then scroll = widget end
         end
         scroll.scripts.OnSizeChanged(scroll, 300)
-        for _, key in ipairs({ "UI_DEFAULTS", "UI_STATUS", "UI_INSPECT" }) do
+        for _, key in ipairs({ "UI_DEFAULTS", "UI_STATUS", "UI_INSPECT", "UI_SUBTITLE_COLOR_DEFAULT" }) do
             local button = ctx:widget(ctx.addon.L[key])
             assert(button.width <= 252, locale .. " button exceeds content width")
             assert(button.height >= button:GetFontString():GetStringHeight() + 12,
                 locale .. " button clips its translated label")
         end
     end
+end)
+
+test("settings keep labels and controls in separate aligned columns in every locale", function()
+    for _, locale in ipairs(clientLocales) do
+        local ctx = Context(nil, { locale = locale })
+        local scroll
+        for _, widget in ipairs(ctx.widgets) do
+            if widget.kind == "ScrollFrame" then scroll = widget end
+        end
+        for _, width in ipairs({ 300, 500, 780 }) do
+            scroll.scripts.OnSizeChanged(scroll, width)
+            local column = ctx:widget(ctx.addon.L.UI_GROUP).point[4]
+            for _, widget in ipairs(ctx.widgets) do
+                if widget.kind == "CheckButton" then
+                    local row, label = widget.parent, widget.Text
+                    equal(widget.point[4], column, locale .. " checkbox column")
+                    equal(label.point[2], row, "label anchored to the setting row")
+                    assert(label.point[4] + label.width < widget.point[4], "label overlaps the checkbox")
+                    assert(row.height >= label:GetStringHeight() + 12, locale .. " clipped label")
+                    assert(widget.point[4] + widget.width <= row.width, "checkbox outside its row")
+                end
+            end
+            local default = ctx:widget(ctx.addon.L.UI_SUBTITLE_COLOR_DEFAULT)
+            assert(default.point[4] + default.width <= default.parent.width,
+                locale .. " colour default button outside its row")
+        end
+    end
+end)
+
+test("setting hover shows localized help and live prerequisites; row clicks toggle once", function()
+    local ctx = Context(nil, { locale = "frFR" })
+    local L, tooltip = ctx.addon.L, ctx.env.GameTooltip
+    local check = ctx:widget(L.UI_NPC_BARS)
+    local row = check.parent
+    local highlight
+    for _, widget in ipairs(ctx.widgets) do
+        if widget.parent == row and widget.allPoints == row then highlight = widget end
+    end
+    assert(highlight)
+    equal(ctx:hasText(L.UI_NPC_BARS_DESC), false, "help is not printed under every setting")
+    row.scripts.OnEnter(row)
+    equal(highlight.shown, true)
+    equal(tooltip.shown, true)
+    equal(tooltip.text, L.UI_NPC_BARS)
+    equal(tooltip.owner, check, "row tooltip stays beside its control, not the panel edge")
+    equal(tooltip.lines[1], L.UI_NPC_BARS_DESC)
+    equal(tooltip.lines[2], L.UI_REQUIRES_NPCS)
+    equal(tooltip.wrap, true)
+    check.scripts.OnEnter(check)
+    row.scripts.OnLeave(row)
+    equal(tooltip.shown, true, "moving onto the control retains its tooltip")
+    equal(tooltip.owner, check, "label and control hover use the same nearby anchor")
+    ctx.addon.SetOption("includeNPCs", true)
+    equal(tooltip.lines[2], nil, "prerequisites update while the row is hovered")
+    row:Click()
+    equal(ctx.addon.GetOptions().showNPCBars, true)
+    row:Click()
+    equal(ctx.addon.GetOptions().showNPCBars, false)
+    check.scripts.OnLeave(check)
+    equal(tooltip.shown, false)
+    equal(highlight.shown, false)
+    check.scripts.OnEnter(check)
+    row:Hide()
+    equal(tooltip.shown, false, "hiding the settings clears hover help")
 end)
 
 local function NPCTooltip(title, colorblind)
@@ -2403,41 +2485,6 @@ test("manual repair recovers a latched visual failure without retrying every tic
     equal(ctx.healthReads, 0)
 end)
 
-test("presets apply behaviour in one visual reconciliation while preserving subtitle style", function()
-    local ctx = Context()
-    ctx:emit("PLAYER_ENTERING_WORLD")
-    ctx.addon.SetMetricsEnabled(true)
-    ctx.addon.SetOption("showFocus", true)
-    ctx.addon.SetOption("subtitleSize", 20)
-    ctx.addon.ResetMetrics()
-    ctx.addon.ApplyPreset("minimal")
-    local db = ctx.addon.GetOptions()
-    equal(db.enabled, true)
-    equal(db.showGroup, false)
-    equal(db.showCombat, false)
-    equal(db.showTarget, false)
-    equal(db.showFocus, false)
-    equal(db.showMouseover, false)
-    assert(ctx.addon.GetMetrics().fullUpdates <= 1, "preset changes should be batched")
-    ctx.addon.ApplyPreset("group")
-    equal(db.showGroup, true)
-    equal(db.showCombat, false)
-    ctx.addon.ApplyPreset("exploration")
-    equal(db.includeNPCs, true)
-    equal(db.showNPCBars, false)
-    equal(db.showNPCTitle, true)
-    ctx.addon.ApplyPreset("default")
-    for key, expected in pairs(ctx.addon.DEFAULTS) do
-        if type(expected) == "boolean" and key ~= "subtitleBrackets" then equal(db[key], expected, key) end
-    end
-    equal(db.subtitleSize, 20, "presets preserve customized appearance")
-    ctx.addon.RestoreDefaults()
-    for key, expected in pairs(ctx.addon.DEFAULTS) do equal(db[key], expected, key) end
-    local writes = #ctx.writes
-    ctx.addon.ApplyPreset("invalid")
-    equal(#ctx.writes, writes)
-end)
-
 test("explicit profile copies preserve selectors and per-character game-setting ownership", function()
     local ctx = Context()
     ctx:emit("PLAYER_ENTERING_WORLD")
@@ -2499,6 +2546,126 @@ test("subtitle appearance applies live to addon labels and survives frame recycl
     equal(nextFrame.extraRegions[1].text, "<Next>")
     equal(nextFrame.extraRegions[1].fontSize, 12)
     equal(nextFrame.extraRegions[1].point[5], -2)
+end)
+
+local function SubtitlePicker(ctx)
+    -- Match native setup's synchronous callback and Classic OK's hide-before-save.
+    local picker = { shown = false }
+    function picker:Hide() self.shown = false end
+    function picker:GetColorRGB() return self.r, self.g, self.b end
+    function picker:Select(r, g, b)
+        self.r, self.g, self.b = r, g, b
+        self.swatchFunc()
+    end
+    function picker:SetupColorPickerAndShow(info)
+        self.info, self.swatchFunc, self.cancelFunc = info, info.swatchFunc, info.cancelFunc
+        self:Select(info.r, info.g, info.b)
+        self.shown = true
+    end
+    function picker:Cancel()
+        self.cancelFunc({ r = self.info.r, g = self.info.g, b = self.info.b })
+        self:Hide()
+    end
+    function picker:Okay()
+        self:Hide()
+        self.swatchFunc()
+    end
+    ctx.env.ColorPickerFrame = picker
+    for _, widget in ipairs(ctx.widgets) do
+        if widget.colorTexture and widget.parent and widget.parent.template == "UIPanelButtonTemplate" then
+            return picker, widget.parent, widget
+        end
+    end
+    error("missing subtitle colour swatch")
+end
+
+test("native subtitle picker previews all channels together, cancels and saves across reload", function()
+    local ctx = Context()
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    ctx.addon.SetOption("showGuild", true)
+    local _, frame = ctx:unit("nameplate1", { guild = "Guild" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    local picker, button, swatch = SubtitlePicker(ctx)
+    button.scripts.OnClick()
+    equal(picker.shown, true)
+    equal(picker.info.r, 0.7)
+    equal(picker.info.g, 0.85)
+    equal(picker.info.b, 0.7)
+    equal(picker.info.hasOpacity, false)
+    ctx.addon.SetMetricsEnabled(true)
+    ctx.addon.ResetMetrics()
+    local writes = #ctx.writes
+    ctx.combat = true
+    picker:Select(0.123, 0.456, 0.789)
+    equal(ctx.addon.GetMetrics().fullUpdates, 1, "one reconciliation per colour change")
+    equal(#ctx.writes, writes, "colour previews require no CVar writes")
+    for index, expected in ipairs({ 0.123, 0.456, 0.789 }) do
+        equal(frame.extraRegions[1].textColor[index], expected)
+        equal(swatch.colorTexture[index], expected)
+    end
+    picker:Cancel()
+    equal(ctx.addon.GetOptions().subtitleRed, 0.7)
+    equal(frame.extraRegions[1].textColor[2], 0.85)
+    equal(swatch.colorTexture[3], 0.7)
+    button.scripts.OnClick()
+    picker:Select(0.2, 0.4, 0.6)
+    picker:Okay()
+    local reload = Context(ctx)
+    equal(reload.addon.GetOptions().subtitleRed, 0.2)
+    equal(reload.addon.GetOptions().subtitleGreen, 0.4)
+    equal(reload.addon.GetOptions().subtitleBlue, 0.6)
+end)
+
+test("colour-only defaults preserve other preferences and invalidate any pending cancel", function()
+    local ctx = Context()
+    ctx.addon.SetOption("subtitleSize", 18)
+    ctx.addon.SetOption("subtitleOffset", 7)
+    ctx.addon.SetOption("subtitleBrackets", false)
+    ctx.addon.SetSubtitleColor(0.2, 0.4, 0.6)
+    local picker, button, swatch = SubtitlePicker(ctx)
+    equal(button.alpha, 0.5, "inactive subtitle colour stays editable")
+    button.scripts.OnClick()
+    picker:Select(0.7, 0.85, 0.7)
+    local staleCancel = picker.cancelFunc
+    ctx:click(ctx.addon.L.UI_SUBTITLE_COLOR_DEFAULT)
+    equal(picker.shown, false)
+    staleCancel()
+    local db = ctx.addon.GetOptions()
+    equal(db.subtitleRed, 0.7)
+    equal(db.subtitleGreen, 0.85)
+    equal(db.subtitleBlue, 0.7)
+    equal(swatch.colorTexture[2], 0.85)
+    equal(db.subtitleSize, 18)
+    equal(db.subtitleOffset, 7)
+    equal(db.subtitleBrackets, false)
+    equal(db.showGuild, false)
+end)
+
+test("profile switches and defaults invalidate picker callbacks without closing another addon's picker", function()
+    local ctx = Context()
+    local picker, button = SubtitlePicker(ctx)
+    button.scripts.OnClick()
+    picker:Select(0.2, 0.4, 0.6)
+    local staleChange, staleCancel = picker.swatchFunc, picker.cancelFunc
+    ctx.addon.SetProfile("global")
+    equal(picker.shown, false)
+    ctx.addon.SetSubtitleColor(0.1, 0.3, 0.5)
+    staleChange()
+    staleCancel()
+    equal(ctx.addon.GetOptions().subtitleRed, 0.1)
+    ctx.addon.SetProfile("character")
+    equal(ctx.addon.GetOptions().subtitleRed, 0.2)
+    button.scripts.OnClick()
+    picker:Select(0.3, 0.5, 0.7)
+    staleCancel = picker.cancelFunc
+    ctx.addon.RestoreDefaults()
+    equal(picker.shown, false)
+    staleCancel()
+    equal(ctx.addon.GetOptions().subtitleRed, 0.7)
+    button.scripts.OnClick()
+    picker.swatchFunc = function() end -- another addon takes ownership
+    ctx.addon.SetProfile("global")
+    equal(picker.shown, true)
 end)
 
 test("numeric preferences reject invalid values and repair malformed saved data", function()
@@ -2651,6 +2818,8 @@ test("new controls use live profile values and render localized effective states
         local ctx = Context(nil, { locale = locale })
         local L = ctx.addon.L
         ctx:emit("PLAYER_ENTERING_WORLD")
+        assert(ctx:hasText(L.UI_SUBTITLE_COLOR))
+        assert(ctx:widget(L.UI_SUBTITLE_COLOR_DEFAULT))
         assert(ctx:hasText(L.UI_AUTO_SETUP))
         assert(ctx:hasText(L.HEALTH_READY))
         ctx:click(L.UI_FOCUS)
@@ -2659,10 +2828,6 @@ test("new controls use live profile values and render localized effective states
         equal(ctx.addon.GetOptions().showMouseover, true)
         ctx:click(L.UI_METRICS)
         equal(ctx.addon.MetricsEnabled(), true)
-        ctx:click(L.UI_PRESET_MINIMAL)
-        equal(ctx.addon.GetOptions().showGroup, false)
-        ctx:click(L.UI_PRESET_DEFAULT)
-        equal(ctx.addon.GetOptions().showGroup, true)
         local slider
         for _, widget in ipairs(ctx.widgets) do
             if widget.kind == "Slider" and widget.minimum == 8 and widget.maximum == 24 then slider = widget end

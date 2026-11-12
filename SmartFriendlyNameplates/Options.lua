@@ -5,11 +5,13 @@ local TITLE = "Smart Friendly Nameplates"
 local panel, category, content, scroll, state, ruleSummary, metricsState
 local checks, rows = {}, {}
 local sliders = {}
+local subtitleColor, colorPickerSession
 local buttonRow
 local globalProfile, profileState
 local metricsCheck, copyGlobal, copyCharacter
 local refreshing = false
 local report
+local hoveredRow, tooltipOwner
 
 local function Text(template, text, left, spacing)
     local label = content:CreateFontString(nil, "ARTWORK", template)
@@ -19,30 +21,78 @@ local function Text(template, text, left, spacing)
     return label
 end
 
+local function Section(title)
+    Text("GameFontHighlightLarge", title)
+    rows[#rows].section = true
+end
+
+local function ShowTooltip(row, owner)
+    if hoveredRow and hoveredRow ~= row then hoveredRow.highlight:Hide() end
+    row.highlight:Show()
+    hoveredRow, tooltipOwner = row, owner
+    -- The row spans the panel; anchor label hover beside its control instead.
+    local anchor = owner == row.frame and (row.check or row.slider or row.color) or owner
+    GameTooltip:SetOwner(anchor, "ANCHOR_RIGHT")
+    GameTooltip:SetText(row.title, 1, 0.82, 0, 1, true)
+    if row.description then GameTooltip:AddLine(row.description, 1, 1, 1, true) end
+    local options = addon.GetOptions()
+    if options and row.applies and not row.applies(options) and row.dependency then
+        GameTooltip:AddLine(row.dependency, 1, 0.82, 0, true)
+    end
+    GameTooltip:Show()
+end
+
+local function RowHover(row, widget)
+    widget:SetScript("OnEnter", function(self) ShowTooltip(row, self) end)
+    local function Clear()
+        if hoveredRow ~= row then return end
+        row.highlight:Hide()
+        hoveredRow, tooltipOwner = nil, nil
+        GameTooltip:Hide()
+    end
+    widget:SetScript("OnLeave", function()
+        if tooltipOwner == widget then Clear() end
+    end)
+    widget:SetScript("OnHide", Clear)
+end
+
+local function SettingRow(title, description, applies, dependency)
+    local frame = CreateFrame("Button", nil, content)
+    local highlight = frame:CreateTexture(nil, "BACKGROUND")
+    highlight:SetAllPoints(frame)
+    highlight:SetColorTexture(1, 1, 1, 0.08)
+    highlight:Hide()
+    local row = { frame = frame, highlight = highlight, title = title,
+        description = description, applies = applies, dependency = dependency }
+    RowHover(row, frame)
+    rows[#rows + 1] = row
+    return row
+end
+
 local function Checkbox(key, title, description, callback, applies, dependency)
-    local check = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
+    local row = SettingRow(title, description, applies, dependency)
+    local check = CreateFrame("CheckButton", nil, row.frame, "UICheckButtonTemplate")
     check.Text:SetText(title)
     check.Text:SetFontObject("GameFontNormal")
     check.Text:SetJustifyH("LEFT")
     check.Text:ClearAllPoints()
-    check.Text:SetPoint("TOPLEFT", check, "TOPRIGHT", 4, -8)
     check:SetScript("OnClick", function(self)
         local checked = not not self:GetChecked()
         if callback then callback(checked) else addon.SetOption(key, checked) end
     end)
-    local detail = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    detail:SetJustifyH("LEFT")
-    detail:SetText(description)
-    rows[#rows + 1] = { check = check, detail = detail, description = description,
-        applies = applies, dependency = dependency }
+    row.check, row.label = check, check.Text
+    row.frame:SetScript("OnClick", function() check:Click() end)
+    RowHover(row, check)
     if key then checks[key] = check end
     return check
 end
 
 local function Slider(key, title, minimum, maximum, step, applies)
-    local label = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    local row = SettingRow(title, L.UI_SUBTITLES_HELP, applies, L.UI_REQUIRES_SUBTITLES)
+    local label = row.frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     label:SetJustifyH("LEFT")
-    local slider = CreateFrame("Slider", nil, content, "OptionsSliderTemplate")
+    label:SetText(title)
+    local slider = CreateFrame("Slider", nil, row.frame, "OptionsSliderTemplate")
     slider:SetMinMaxValues(minimum, maximum)
     slider:SetValueStep(step)
     slider:SetObeyStepOnDrag(true)
@@ -56,9 +106,59 @@ local function Slider(key, title, minimum, maximum, step, applies)
         local rounded = math.floor(value / step + 0.5) * step
         addon.SetOption(key, rounded)
     end)
-    local row = { slider = slider, label = label, title = title, key = key, step = step, applies = applies }
-    rows[#rows + 1] = row
+    row.slider, row.label, row.key, row.step = slider, label, key, step
+    row.value = row.frame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    row.value:SetPoint("BOTTOM", slider, "TOP", 0, 3)
+    RowHover(row, slider)
     sliders[#sliders + 1] = row
+end
+
+local function SubtitleColor(applies)
+    local row = SettingRow(L.UI_SUBTITLE_COLOR, L.UI_SUBTITLES_HELP, applies, L.UI_REQUIRES_SUBTITLES)
+    local button = CreateFrame("Button", nil, row.frame, "UIPanelButtonTemplate")
+    button:SetSize(32, 24)
+    local swatch = button:CreateTexture(nil, "OVERLAY")
+    swatch:SetPoint("TOPLEFT", button, "TOPLEFT", 5, -5)
+    swatch:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -5, 5)
+    local label = row.frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    label:SetJustifyH("LEFT")
+    label:SetText(L.UI_SUBTITLE_COLOR)
+    local default = CreateFrame("Button", nil, row.frame, "UIPanelButtonTemplate")
+    default:SetText(L.UI_SUBTITLE_COLOR_DEFAULT)
+    local defaultLabel = default:GetFontString()
+    defaultLabel:SetWordWrap(true)
+    default:SetScript("OnClick", function()
+        local session = colorPickerSession
+        colorPickerSession = nil
+        if session and session.picker.swatchFunc == session.onChanged then session.picker:Hide() end
+        local defaults = addon.DEFAULTS
+        addon.SetSubtitleColor(defaults.subtitleRed, defaults.subtitleGreen, defaults.subtitleBlue)
+    end)
+    row.color, row.swatch, row.label = button, swatch, label
+    row.default, row.defaultLabel, row.defaultWidth = default, defaultLabel, defaultLabel:GetStringWidth() + 24
+    subtitleColor = row
+    row.frame:SetScript("OnClick", function() button:Click() end)
+    RowHover(row, button)
+    RowHover(row, default)
+    button:SetScript("OnClick", function()
+        local options = addon.GetOptions()
+        if not options then return end
+        local r, g, b = options.subtitleRed, options.subtitleGreen, options.subtitleBlue
+        local picker = ColorPickerFrame
+        local session = { options = options, picker = picker, r = r, g = g, b = b }
+        local function Apply(red, green, blue)
+            if colorPickerSession ~= session or addon.GetOptions() ~= options then return end
+            session.r, session.g, session.b = red, green, blue
+            addon.SetSubtitleColor(red, green, blue)
+        end
+        session.onChanged = function() Apply(picker:GetColorRGB()) end
+        colorPickerSession = session
+        picker:SetupColorPickerAndShow({
+            r = r, g = g, b = b, hasOpacity = false,
+            swatchFunc = session.onChanged,
+            cancelFunc = function() Apply(r, g, b) end,
+        })
+    end)
 end
 
 local function Buttons()
@@ -66,18 +166,19 @@ local function Buttons()
     rows[#rows + 1] = { buttons = buttonRow }
 end
 
-local function Button(title, width, callback)
+local function Button(title, width, callback, headerRow)
     local button = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
     button:SetSize(width, 24)
     button:SetText(title)
     button:SetScript("OnClick", callback)
     local label = button:GetFontString()
     label:SetWordWrap(true)
-    buttonRow[#buttonRow + 1] = {
+    local entry = {
         button = button,
         label = label,
         width = math.max(width, label:GetStringWidth() + 24),
     }
+    if headerRow then headerRow.reset = entry else buttonRow[#buttonRow + 1] = entry end
     return button
 end
 
@@ -88,20 +189,33 @@ local function Layout()
     local width = content:GetWidth()
     local top = 16
     for _, row in ipairs(rows) do
-        if row.check then
-            row.check:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -top)
-            row.check.Text:SetWidth(math.max(1, width - 80))
-            top = top + math.max(32, row.check.Text:GetStringHeight() + 16) + 4
-            row.detail:SetPoint("TOPLEFT", content, "TOPLEFT", 56, -top)
-            row.detail:SetWidth(math.max(1, width - 80))
-            top = top + row.detail:GetStringHeight() + 20
-        elseif row.slider then
-            row.label:SetPoint("TOPLEFT", content, "TOPLEFT", 24, -top)
-            row.label:SetWidth(math.max(1, width - 48))
-            top = top + row.label:GetStringHeight() + 12
-            row.slider:SetPoint("TOPLEFT", content, "TOPLEFT", 32, -top)
-            row.slider:SetSize(math.max(32, width - 72), 16)
-            top = top + 44
+        if row.frame then
+            local rowWidth = math.max(1, width - 48)
+            local controlLeft = math.floor(math.min(300, rowWidth * 0.5))
+            local controlWidth = math.max(1, rowWidth - controlLeft - 8)
+            row.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 24, -top)
+            row.label:ClearAllPoints()
+            row.label:SetPoint("LEFT", row.frame, "LEFT", 16, 0)
+            row.label:SetWidth(math.max(1, controlLeft - 28))
+            local height = math.max(40, row.label:GetStringHeight() + 12)
+            if row.check then
+                row.check:SetSize(32, 32)
+                row.check:SetPoint("LEFT", row.frame, "LEFT", controlLeft - 4, 0)
+            elseif row.slider then
+                row.slider:SetPoint("LEFT", row.frame, "LEFT", controlLeft + 8, 0)
+                row.slider:SetSize(math.max(32, controlWidth - 16), 16)
+                height = math.max(52, height)
+            elseif row.color then
+                row.color:SetPoint("LEFT", row.frame, "LEFT", controlLeft, 0)
+                local defaultWidth = math.min(row.defaultWidth, math.max(32, controlWidth - 44))
+                row.defaultLabel:SetWidth(math.max(1, defaultWidth - 24))
+                local buttonHeight = math.max(24, row.defaultLabel:GetStringHeight() + 12)
+                row.default:SetPoint("LEFT", row.frame, "LEFT", controlLeft + 44, 0)
+                row.default:SetSize(defaultWidth, buttonHeight)
+                height = math.max(height, buttonHeight + 8)
+            end
+            row.frame:SetSize(rowWidth, height)
+            top = top + height
         elseif row.buttons then
             local left = 24
             local lineHeight = 0
@@ -120,7 +234,22 @@ local function Layout()
                 lineHeight = math.max(lineHeight, height)
             end
             top = top + lineHeight + 16
+        elseif row.reset then
+            local entry = row.reset
+            local available = math.max(32, width - 48)
+            local buttonWidth = math.min(entry.width, available)
+            entry.label:SetWidth(math.max(1, buttonWidth - 24))
+            local buttonHeight = math.max(24, entry.label:GetStringHeight() + 12)
+            row.label:SetWidth(available)
+            local sameLine = row.label:GetStringWidth() + buttonWidth + 16 <= available
+            if sameLine then row.label:SetWidth(math.max(1, available - buttonWidth - 16)) end
+            row.label:SetPoint("TOPLEFT", content, "TOPLEFT", 24, -top)
+            local buttonTop = sameLine and top or top + row.label:GetStringHeight() + 12
+            entry.button:SetSize(buttonWidth, buttonHeight)
+            entry.button:SetPoint("TOPLEFT", content, "TOPLEFT", width - 24 - buttonWidth, -buttonTop)
+            top = math.max(top + row.label:GetStringHeight(), buttonTop + buttonHeight) + 20
         else
+            if row.section then top = top + 20 end
             row.label:SetPoint("TOPLEFT", content, "TOPLEFT", row.left, -top)
             row.label:SetWidth(math.max(1, width - row.left - 24))
             top = top + row.label:GetStringHeight() + row.spacing
@@ -133,23 +262,41 @@ function addon.RefreshOptions()
     if not panel then return end
     local options = addon.GetOptions()
     if not options then return end
+    if colorPickerSession then
+        local session = colorPickerSession
+        if session.picker.swatchFunc ~= session.onChanged then
+            colorPickerSession = nil
+        elseif session.options ~= options or session.r ~= options.subtitleRed
+            or session.g ~= options.subtitleGreen or session.b ~= options.subtitleBlue then
+            -- Profile switches, defaults and other edits invalidate this preview.
+            -- Never close a picker that another addon has since taken over.
+            colorPickerSession = nil
+            session.picker:Hide()
+        end
+    end
     refreshing = true
     for key, check in pairs(checks) do check:SetChecked(options[key]) end
     for _, row in ipairs(sliders) do
         row.slider:SetValue(options[row.key])
         local value = row.step < 1 and string.format("%.2f", options[row.key]) or tostring(options[row.key])
-        row.label:SetText(row.title .. ": " .. value)
+        row.value:SetText(value)
         local alpha = (not row.applies or row.applies(options)) and 1 or 0.5
         row.label:SetAlpha(alpha)
         row.slider:SetAlpha(alpha)
+        row.value:SetAlpha(alpha)
     end
     for _, row in ipairs(rows) do
         if row.check then
             local active = not row.applies or row.applies(options)
             row.check:SetAlpha(active and 1 or 0.5)
-            row.detail:SetAlpha(active and 1 or 0.6)
-            row.detail:SetText(row.description .. (not active and row.dependency and (" " .. row.dependency) or ""))
         end
+    end
+    if subtitleColor then
+        subtitleColor.swatch:SetColorTexture(options.subtitleRed, options.subtitleGreen, options.subtitleBlue)
+        local alpha = subtitleColor.applies(options) and 1 or 0.5
+        subtitleColor.color:SetAlpha(alpha)
+        subtitleColor.label:SetAlpha(alpha)
+        subtitleColor.default:SetAlpha(alpha)
     end
     local shared = addon.GetProfile() == "global"
     globalProfile:SetChecked(shared)
@@ -168,6 +315,7 @@ function addon.RefreshOptions()
         metrics.tooltipReads or 0, metrics.ownerChecks or 0))
     refreshing = false
     Layout()
+    if hoveredRow then ShowTooltip(hoveredRow, tooltipOwner) end
 end
 
 local function RestoreDefaults()
@@ -240,12 +388,13 @@ function addon.RegisterOptions()
     end)
 
     Text("GameFontNormalLarge", TITLE .. " |cff888888v" .. addon.VERSION .. "|r")
+    Button(L.UI_DEFAULTS, 132, RestoreDefaults, rows[#rows])
     Text("GameFontHighlightSmall", L.UI_INTRO)
     Text("GameFontHighlightSmall", L.UI_AUTO_SETUP)
     state = Text("GameFontHighlightSmall", "")
     ruleSummary = Text("GameFontHighlightSmall", "")
 
-    Text("GameFontNormal", L.UI_SECTION_PROFILES)
+    Section(L.UI_SECTION_PROFILES)
     globalProfile = Checkbox(nil, L.UI_PROFILE_GLOBAL, L.UI_PROFILE_GLOBAL_DESC, function(checked)
         addon.SetProfile(checked and "global" or "character")
     end)
@@ -254,15 +403,8 @@ function addon.RegisterOptions()
     Buttons()
     copyGlobal = Button(L.UI_COPY_GLOBAL, 140, function() addon.CopyProfile("global") end)
     copyCharacter = Button(L.UI_COPY_CHARACTER, 140, function() addon.CopyProfile("character") end)
-    Text("GameFontNormal", L.UI_SECTION_PRESETS)
-    Text("GameFontHighlightSmall", L.UI_PRESETS_HELP)
-    Buttons()
-    Button(L.UI_PRESET_MINIMAL, 112, function() addon.ApplyPreset("minimal") end)
-    Button(L.UI_PRESET_GROUP, 112, function() addon.ApplyPreset("group") end)
-    Button(L.UI_PRESET_DEFAULT, 132, function() addon.ApplyPreset("default") end)
-    Button(L.UI_PRESET_EXPLORATION, 112, function() addon.ApplyPreset("exploration") end)
 
-    Text("GameFontNormal", L.UI_SECTION_PLAYERS)
+    Section(L.UI_SECTION_PLAYERS)
     Checkbox("enabled", L.UI_ENABLE,
         L.UI_ENABLE_DESC)
     Checkbox("showGroup", L.UI_GROUP,
@@ -273,10 +415,10 @@ function addon.RegisterOptions()
         L.UI_TARGET_DESC)
     Checkbox("showFocus", L.UI_FOCUS, L.UI_FOCUS_DESC)
     Checkbox("showMouseover", L.UI_MOUSEOVER, L.UI_MOUSEOVER_DESC)
-    Text("GameFontNormal", L.UI_SECTION_MINIONS)
+    Section(L.UI_SECTION_MINIONS)
     Checkbox("includeMinions", L.UI_MINIONS,
         L.UI_MINIONS_DESC)
-    Text("GameFontNormal", L.UI_SECTION_NPCS)
+    Section(L.UI_SECTION_NPCS)
     local function NPCs(options) return options.includeNPCs end
     local function NPCNames(options) return options.includeNPCs and not options.showNPCBars end
     Checkbox("includeNPCs", L.UI_NPCS,
@@ -290,7 +432,7 @@ function addon.RegisterOptions()
     Checkbox("npcNameColors", L.UI_NPC_COLORS,
         L.UI_NPC_COLORS_DESC, nil, NPCNames, L.UI_REQUIRES_NPC_NAMES)
 
-    Text("GameFontNormal", L.UI_SECTION_APPEARANCE)
+    Section(L.UI_SECTION_APPEARANCE)
     Checkbox("classColorsOnly", L.UI_COLORS, L.UI_COLORS_DESC)
     Checkbox("showGuild", L.UI_GUILD, L.UI_GUILD_DESC)
     Text("GameFontHighlightSmall", L.UI_SUBTITLES_HELP)
@@ -301,12 +443,9 @@ function addon.RegisterOptions()
         nil, Subtitles, L.UI_REQUIRES_SUBTITLES)
     Slider("subtitleSize", L.UI_SUBTITLE_SIZE, 8, 24, 1, Subtitles)
     Slider("subtitleOffset", L.UI_SUBTITLE_OFFSET, 0, 12, 1, Subtitles)
-    Slider("subtitleRed", L.UI_SUBTITLE_RED, 0, 1, 0.05, Subtitles)
-    Slider("subtitleGreen", L.UI_SUBTITLE_GREEN, 0, 1, 0.05, Subtitles)
-    Slider("subtitleBlue", L.UI_SUBTITLE_BLUE, 0, 1, 0.05, Subtitles)
-    Text("GameFontNormal", L.UI_SECTION_DIAGNOSTICS)
+    SubtitleColor(Subtitles)
+    Section(L.UI_SECTION_DIAGNOSTICS)
     Buttons()
-    Button(L.UI_DEFAULTS, 132, RestoreDefaults)
     Button(L.UI_STATUS, 112, function() addon.PrintStatus() end)
     Button(L.UI_INSPECT, 120, function() addon.DebugTarget() end)
     Button(L.UI_REPAIR, 112, function() addon.Repair() end)

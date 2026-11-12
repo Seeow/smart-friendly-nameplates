@@ -2,7 +2,7 @@
 -- WoW Forever 1.60.1. No dependency; only ordinary, accessible nameplates.
 local ADDON_NAME, addon = ...
 local L = addon.L
-local VERSION = "0.2.0"
+local VERSION = "0.2.1"
 addon.VERSION = VERSION
 local DEFAULTS = {
     enabled = true,
@@ -644,22 +644,6 @@ function addon.RestoreDefaults()
     RefreshPreferences()
 end
 
-local PRESETS = {
-    minimal = { showGroup = false, showCombat = false },
-    group = { showGroup = true, showCombat = false },
-    default = {},
-    exploration = { includeNPCs = true },
-}
-function addon.ApplyPreset(id)
-    if not db or not PRESETS[id] then return end
-    -- Presets change display behaviour, preserving the user's subtitle style.
-    for key, value in pairs(DEFAULTS) do
-        if not RANGES[key] and key ~= "subtitleBrackets" then db[key] = value end
-    end
-    for key, value in pairs(PRESETS[id]) do db[key] = value end
-    RefreshPreferences()
-end
-
 function addon.CopyProfile(destination)
     if not db or (destination ~= "character" and destination ~= "global") then return end
     local target = ProfileSettings(destination)
@@ -702,6 +686,19 @@ local function SetOption(key, value)
 end
 
 addon.SetOption = SetOption
+
+-- A picker drag changes all three channels together, with one visual refresh.
+function addon.SetSubtitleColor(r, g, b)
+    if not db then return end
+    for index = 1, 3 do
+        local value = select(index, r, g, b)
+        if type(value) ~= "number" or value ~= value or value < 0 or value > 1 then return end
+    end
+    db.subtitleRed, db.subtitleGreen, db.subtitleBlue = r, g, b
+    UpdateAll()
+    RefreshOptions()
+end
+
 addon.GetOptions = function()
     if not db then return end
     return db, pendingCVars
