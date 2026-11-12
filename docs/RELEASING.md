@@ -48,6 +48,8 @@ SmartFriendlyNameplates/
   Localization.lua
   LocalesEurope.lua
   LocalesAsia.lua
+  DiagnosticsLocalization.lua
+  OptionsLocalization.lua
   README.md
   LICENSE
 ```
@@ -62,23 +64,23 @@ uses Release.
 1. Update the version in both `SmartFriendlyNameplates.toc` and the Lua `VERSION`
    constant, and add the version's notes to `CHANGELOG.md`.
 2. Run the Lua checks and build locally. The packaging script verifies that the
-   two version values match. For example, after changing them to `0.1.15`:
+   two version values match. For example, after changing them to `0.2.0`:
 
    ```powershell
-   ./scripts/package.ps1 -Tag v0.1.15
+   ./scripts/package.ps1 -Tag v0.2.0
    ```
 
 3. Commit and push the changes to `main`, and wait for its checks to pass.
 4. Create and push the matching annotated tag:
 
    ```sh
-   git tag -a v0.1.15 -m "Release 0.1.15"
-   git push origin v0.1.15
+   git tag -a v0.2.0 -m "Release 0.2.0"
+   git push origin v0.2.0
    ```
 
-For test releases, use matching versions/tags such as `0.1.15-beta.1` /
-`v0.1.15-beta.1`, or `0.1.15-alpha.1` / `v0.1.15-alpha.1`. The current prepared
-version is `0.1.15`; use its matching tag only if intentionally publishing it.
+For test releases, use matching versions/tags such as `0.2.0-beta.1` /
+`v0.2.0-beta.1`, or `0.2.0-alpha.1` / `v0.2.0-alpha.1`. The current prepared
+version is `0.2.0`; use its matching tag only if intentionally publishing it.
 
 5. Check the CurseForge file, its game version (**Forever 1.60.1**) and channel.
    File moderation still applies. Existing users receive the file according to

@@ -1,7 +1,8 @@
 -- Integration checks with a simulated WoW event loop. Lua 5.1+ / Fengari.
 local sources = {
     "SmartFriendlyNameplates/Localization.lua", "SmartFriendlyNameplates/LocalesEurope.lua",
-    "SmartFriendlyNameplates/LocalesAsia.lua", "SmartFriendlyNameplates/SmartFriendlyNameplates.lua",
+    "SmartFriendlyNameplates/LocalesAsia.lua", "SmartFriendlyNameplates/DiagnosticsLocalization.lua",
+    "SmartFriendlyNameplates/OptionsLocalization.lua", "SmartFriendlyNameplates/SmartFriendlyNameplates.lua",
     "SmartFriendlyNameplates/Options.lua",
 }
 local SECRET, API_ERROR = {}, {}
@@ -21,7 +22,7 @@ local function Context(previous, options)
     local ctx = {
         units = {}, plates = {}, messages = {}, combat = false, writes = {}, nameHooks = {},
         widgets = {}, categories = {}, healthReads = 0, guildReads = 0, tooltipReads = 0,
-        groupMembers = 0, inRaid = false,
+        groupMembers = 0, inRaid = false, ownerChecks = 0,
         cvars = previous and previous.cvars or {
             nameplateShowFriendlyPlayers = "0",
             nameplateShowOnlyNameForFriendlyPlayerUnits = "0",
@@ -43,9 +44,15 @@ local function Context(previous, options)
     env.GetBuildInfo = function() return "1.60.1", "70888", "", 16001 end
     env.GetLocale = function() return options and options.locale or "enUS" end
     env.InCombatLockdown = function() return ctx.combat end
+    env.UIParent = {}
+    env.UISpecialFrames = {}
     local function Widget()
-        local widget = { scripts = {}, events = {}, shown = false, alpha = 1 }
-        function widget:SetPoint(...) self.point = { ... } end
+        local widget = { scripts = {}, events = {}, shown = false, alpha = 1, enabled = true,
+            visualWrites = { point = 0, text = 0, color = 0, font = 0, show = 0, hide = 0 } }
+        function widget:SetPoint(...)
+            self.visualWrites.point = self.visualWrites.point + 1
+            self.point = { ... }
+        end
         function widget:ClearAllPoints() self.point = nil end
         function widget:SetSize(width, height) self.width, self.height = width, height end
         function widget:SetWidth(width) self.width = width end
@@ -56,18 +63,68 @@ local function Context(previous, options)
         end
         function widget:GetStringWidth() return #(self.text or "") * 7 end
         function widget:SetScrollChild(child) self.scrollChild = child end
+        function widget:SetVerticalScroll(value) self.verticalScroll = value end
         function widget:SetJustifyH() end
-        function widget:SetFontObject() end
-        function widget:SetTextColor() end
+        function widget:SetFontObject(object) self.fontObject = object end
+        function widget:GetFont() return self.fontPath or "Fonts/FRIZQT__.TTF", self.fontSize or 12, self.fontFlags or "" end
+        function widget:SetFont(path, size, flags)
+            self.visualWrites.font = self.visualWrites.font + 1
+            self.fontPath, self.fontSize, self.fontFlags = path, size, flags
+            return true
+        end
+        function widget:SetTextColor(r, g, b, a)
+            self.visualWrites.color = self.visualWrites.color + 1
+            self.textColor = { r, g, b, a }
+        end
         function widget:SetWordWrap() end
         function widget:IsForbidden() return false end
         function widget:GetAlpha() return self.alpha end
         function widget:SetAlpha(alpha) self.alpha = alpha end
-        function widget:SetText(text) self.text = text end
+        function widget:SetText(text)
+            self.visualWrites.text = self.visualWrites.text + 1
+            self.text = text
+            if self.scripts.OnTextChanged then self.scripts.OnTextChanged(self, false) end
+        end
+        function widget:GetText() return self.text or "" end
+        function widget:SetMinMaxValues(low, high) self.minimum, self.maximum = low, high end
+        function widget:SetValueStep(step) self.valueStep = step end
+        function widget:SetObeyStepOnDrag(value) self.obeyStep = value end
+        function widget:SetValue(value)
+            self.value = value
+            if self.scripts.OnValueChanged then self.scripts.OnValueChanged(self, value) end
+        end
+        function widget:GetValue() return self.value end
+        function widget:SetEnabled(value) self.enabled = value end
+        function widget:IsEnabled() return self.enabled end
+        function widget:Enable() self.enabled = true end
+        function widget:Disable() self.enabled = false end
+        function widget:SetMultiLine(value) self.multiline = value end
+        function widget:SetAutoFocus(value) self.autoFocus = value end
+        function widget:SetMaxLetters(value) self.maxLetters = value end
+        function widget:SetTextInsets(...) self.textInsets = { ... } end
+        function widget:HighlightText() self.highlighted = true end
+        function widget:SetFocus() self.focused = true end
+        function widget:ClearFocus() self.focused = false end
+        function widget:SetFrameStrata(value) self.frameStrata = value end
+        function widget:SetClampedToScreen(value) self.clampedToScreen = value end
+        function widget:EnableMouse(value) self.mouseEnabled = value end
+        function widget:SetMovable(value) self.movable = value end
+        function widget:RegisterForDrag(...) self.dragButtons = { ... } end
+        function widget:StartMoving() self.moving = true end
+        function widget:StopMovingOrSizing() self.moving = false end
+        function widget:SetBackdrop(value) self.backdrop = value end
+        function widget:SetBackdropColor(...) self.backdropColor = { ... } end
+        function widget:SetBackdropBorderColor(...) self.backdropBorderColor = { ... } end
         function widget:SetChecked(checked) self.checked = checked end
         function widget:GetChecked() return self.checked end
-        function widget:Hide() self.shown = false end
+        function widget:IsShown() return self.shown end
+        function widget:Hide()
+            self.visualWrites.hide = self.visualWrites.hide + 1
+            self.shown = false
+            if self.scripts.OnHide then self.scripts.OnHide(self) end
+        end
         function widget:Show()
+            self.visualWrites.show = self.visualWrites.show + 1
             self.shown = true
             if self.scripts.OnShow then self.scripts.OnShow(self) end
         end
@@ -84,6 +141,9 @@ local function Context(previous, options)
             return self.fontString
         end
         if kind == "CheckButton" then frame.Text = Widget() end
+        if kind == "Slider" then frame.Low, frame.High, frame.Text = Widget(), Widget(), Widget() end
+        if template == "BasicFrameTemplateWithInset" then frame.TitleText = Widget() end
+        if name then env[name] = frame end
         function frame:CreateFontString() return Widget() end
         function frame:RegisterEvent(event) self.events[event] = true end
         function frame:UnregisterEvent(event) self.events[event] = nil end
@@ -125,22 +185,28 @@ local function Context(previous, options)
         end
         return false
     end
+    local function UnitRecord(unit)
+        return ctx.units[unit] or (ctx[unit] and ctx.units[ctx[unit]])
+    end
     local function ReadUnit(unit, key)
-        local value = ctx.units[unit] and ctx.units[unit][key]
+        local record = UnitRecord(unit)
+        local value = record and record[key]
         if value == API_ERROR then error("simulated restricted API") end
         return value
     end
-    env.UnitExists = function(unit) return ctx.units[unit] ~= nil end
+    env.UnitExists = function(unit) return UnitRecord(unit) ~= nil end
     env.UnitIsPlayer = function(unit) return ReadUnit(unit, "player") end
     env.UnitIsMinion = function(unit) return ReadUnit(unit, "minion") end
     env.UnitIsFriend = function(_, unit) return ReadUnit(unit, "friendly") end
     env.UnitIsUnit = function(unit, other)
-        if other == "target" then
-            local override = ReadUnit(unit, "target")
+        if other == "target" or other == "focus" or other == "mouseover" then
+            local override = ReadUnit(unit, other)
             if override ~= nil then return override end
-            return ctx.target == unit
+            return ctx[other] == unit or (ctx[unit] ~= nil and ctx[unit] == ctx[other])
         end
-        return ReadUnit(unit, "self")
+        if other == "player" then return ReadUnit(unit, "self") end
+        return unit == other or ctx[unit] == other or ctx[other] == unit
+            or (ctx[unit] ~= nil and ctx[unit] == ctx[other])
     end
     env.GetGuildInfo = function(unit)
         ctx.guildReads = ctx.guildReads + 1
@@ -159,6 +225,7 @@ local function Context(previous, options)
     env.IsInRaid = function() return ctx.inRaid end
     env.GetNumGroupMembers = function() return ctx.groupMembers end
     env.UnitIsOwnerOrControllerOfUnit = function(owner, unit)
+        ctx.ownerChecks = ctx.ownerChecks + 1
         local actualOwner = ReadUnit(unit, "owner")
         if actualOwner == SECRET then return SECRET end
         return actualOwner == owner
@@ -197,6 +264,7 @@ local function Context(previous, options)
             ctx.writes[#ctx.writes + 1] = name
             if not ctx.failWrite then
                 ctx.cvars[name] = value
+                ctx:emit("CVAR_UPDATE", name, value)
                 if name == "nameplateShowOnlyNameForFriendlyPlayerUnits" then
                     for _, plate in pairs(ctx.plates) do
                         local frame = plate.UnitFrame
@@ -218,7 +286,7 @@ local function Context(previous, options)
     env.C_NamePlate = {
         GetNamePlateForUnit = function(unit, includeForbidden)
             assert(not includeForbidden, "must never request forbidden frames")
-            return ctx.plates[unit]
+            return ctx.plates[unit] or (ctx[unit] and ctx.plates[ctx[unit]])
         end,
         GetNamePlates = function()
             local result = {}
@@ -226,8 +294,8 @@ local function Context(previous, options)
             return result
         end,
     }
-    function ctx:emit(event, unit)
-        self.driver.scripts.OnEvent(self.driver, event, unit)
+    function ctx:emit(event, ...)
+        self.driver.scripts.OnEvent(self.driver, event, ...)
     end
     function ctx:tick()
         self.driver.scripts.OnUpdate(self.driver, 0.21)
@@ -272,7 +340,11 @@ local function Context(previous, options)
                 local color = self.vertexColor
                 return color[1], color[2], color[3], color[4]
             end
-            function frame.name:SetVertexColor(r, g, b, a) self.vertexColor = { r, g, b, a } end
+            frame.name.colorWrites = 0
+            function frame.name:SetVertexColor(r, g, b, a)
+                self.colorWrites = self.colorWrites + 1
+                self.vertexColor = { r, g, b, a }
+            end
             function frame.name:GetJustifyH() return self.justification or "CENTER" end
             frame.extraRegions = {}
             function frame:CreateFontString()
@@ -988,19 +1060,22 @@ test("panel toggles in combat defer CVars and refresh their pending message afte
     ctx:click(FILTER)
     equal(BarVisible(frame), 1)
     equal(#ctx.writes, writes)
-    assert(ctx:hasText("pending until combat ends"))
+    equal(ctx.addon.GetHealthState(), "combat")
+    assert(ctx:hasText(ctx.addon.L.HEALTH_COMBAT))
     ctx.combat = false
     ctx:emit("PLAYER_REGEN_ENABLED")
     equal(ctx.cvars.nameplateShowFriendlyPlayers, "0")
-    assert(ctx:hasText("Filter disabled."))
-    equal(ctx:hasText("pending until combat ends"), false)
+    equal(ctx.addon.GetHealthState(), "disabled")
+    assert(ctx:hasText(ctx.addon.L.HEALTH_DISABLED))
+    equal(ctx:hasText(ctx.addon.L.HEALTH_COMBAT), false)
     ctx.combat = true
     ctx:click(FILTER)
     equal(ctx.cvars.nameplateShowFriendlyPlayers, "0")
     ctx.combat = false
     ctx:emit("PLAYER_REGEN_ENABLED")
     equal(ctx.cvars.nameplateShowFriendlyPlayers, "1")
-    assert(ctx:hasText("Filter enabled."))
+    equal(ctx.addon.GetHealthState(), "ready")
+    assert(ctx:hasText(ctx.addon.L.HEALTH_READY))
 end)
 
 test("default actions restore both preferences and diagnostic buttons print in chat", function()
@@ -1020,7 +1095,8 @@ test("default actions restore both preferences and diagnostic buttons print in c
     assert(#ctx.messages > messages)
     ctx:unit("target")
     ctx:click("Inspect target")
-    assert(ctx.messages[#ctx.messages]:find("Target display:", 1, true))
+    assert(ctx.messages[#ctx.messages - 1]:find("Target display:", 1, true))
+    assert(ctx.messages[#ctx.messages]:find("Reason:", 1, true))
 end)
 
 test("bare sfn and options open the registered category; combat prevents opening", function()
@@ -1436,7 +1512,8 @@ test("removed width setting is cleared and native name geometry is untouched", f
     ctx.addon.SetOption("nameWidthPercent", 500)
     equal(ctx.env.SmartFriendlyNameplatesDB.nameWidthPercent, nil)
     for _, widget in ipairs(ctx.widgets) do
-        assert(widget.kind ~= "Slider", "retired slider still exists")
+        assert(widget.kind ~= "Slider" or widget.minimum ~= 100 or widget.maximum ~= 500,
+            "retired name-width slider still exists")
     end
     local _, frame = ctx:unit("nameplate1", { guild = "Example" })
     local function Untouched() error("native name geometry must not be accessed") end
@@ -1509,17 +1586,18 @@ end)
 test("French status, target diagnostics and combat deferral use localized text", function()
     local ctx = Context(nil, { locale = "frFR" })
     local L = ctx.addon.L
+    ctx:emit("PLAYER_ENTERING_WORLD") -- establish settings that actually need restoring
     ctx:unit("target", { combat = SECRET })
     ctx:command("debug")
     assert(ctx.messages[1]:find("Cible : joueur=oui", 1, true))
     assert(ctx.messages[1]:find("son combat=indisponible", 1, true))
     ctx.combat = true
     ctx:command("off")
-    assert(ctx:hasText(L.UI_PENDING))
+    assert(ctx:hasText(L.HEALTH_COMBAT))
     equal(ctx.messages[#ctx.messages], "|cff66ccffSmart Friendly Nameplates:|r " .. L.CMD_PENDING)
     ctx.combat = false
     ctx:emit("PLAYER_REGEN_ENABLED")
-    assert(ctx:hasText(L.UI_DISABLED))
+    assert(ctx:hasText(L.HEALTH_DISABLED))
     ctx:command("status")
     assert(ctx.messages[#ctx.messages]:find(L.UI_RESTRICTIONS, 1, true))
 end)
@@ -1548,7 +1626,13 @@ test("French warnings and protected-error labels are localized", function()
     ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
     assert(ctx.messages[#ctx.messages]:find("Filtre suspendu pour cette barre d’info : erreur protégée", 1, true))
     ctx:command("status")
-    assert(ctx.messages[#ctx.messages - 1]:find("Dernier problème :", 1, true))
+    local historyFound = false
+    for _, message in ipairs(ctx.messages) do
+        if message:find("Dernier problème :", 1, true) and message:find(ctx.addon.L.HISTORY_NOTE, 1, true) then
+            historyFound = true
+        end
+    end
+    equal(historyFound, true, "the localized historical error remains available in status")
 end)
 
 local clientLocales = { "enUS", "enGB", "frFR", "deDE", "esES", "esMX", "itIT", "ptBR", "ruRU", "koKR", "zhCN", "zhTW" }
@@ -2140,6 +2224,513 @@ test("all locales expose the active profile in the panel and diagnostics", funct
         for _, message in ipairs(ctx.messages) do if message:find(expected, 1, true) then found = true end end
         equal(found, true)
     end
+end)
+
+test("unchanged polling avoids duplicate visual writes while repairing a native alpha reset", function()
+    local ctx = Context()
+    ctx.addon.SetOption("showGuild", true)
+    local _, frame = ctx:unit("nameplate1", { class = "MAGE", guild = "Example" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    local label = frame.extraRegions[1]
+    local alphas, colors = frame.changes, frame.name.colorWrites
+    local text, points = label.visualWrites.text, label.visualWrites.point
+    for _ = 1, 8 do ctx:tick() end
+    equal(frame.changes, alphas, "unchanged children need no alpha writes")
+    equal(frame.name.colorWrites, colors, "unchanged name needs no colour writes")
+    equal(label.visualWrites.text, text, "unchanged subtitle needs no text writes")
+    equal(label.visualWrites.point, points, "unchanged subtitle needs no anchor writes")
+    frame.HealthBarsContainer.alpha = 1
+    ctx:tick()
+    equal(BarVisible(frame), 0, "the native engine may reset alpha without changing the desired mode")
+    equal(frame.changes, alphas + 1, "only the reset component is rewritten")
+end)
+
+test("unrelated unit events do not rescan all tracked nameplates", function()
+    local ctx = Context()
+    ctx.addon.SetMetricsEnabled(true)
+    local _, frame = ctx:unit("nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx.addon.ResetMetrics()
+    for _, event in ipairs({ "UNIT_FLAGS", "UNIT_FACTION", "UNIT_NAME_UPDATE" }) do
+        ctx:emit(event, "unrelatedUnit")
+    end
+    equal(ctx.addon.GetMetrics().updates, 0)
+    equal(BarVisible(frame), 0)
+    ctx.units.nameplate1.combat = true
+    ctx:emit("UNIT_FLAGS", "nameplate1")
+    equal(BarVisible(frame), 1, "relevant events stay immediate")
+    ctx.party1 = "nameplate1"
+    ctx.units.nameplate1.combat = false
+    ctx:emit("UNIT_FLAGS", "party1")
+    equal(BarVisible(frame), 0, "an alternate token for a tracked unit is still relevant")
+end)
+
+test("focus and mouseover bar rules act independently and default to disabled", function()
+    for _, item in ipairs({ { "showFocus", "focus", "PLAYER_FOCUS_CHANGED" },
+        { "showMouseover", "mouseover", "UPDATE_MOUSEOVER_UNIT" } }) do
+        local ctx = Context()
+        equal(ctx.addon.GetOptions()[item[1]], false)
+        local _, first = ctx:unit("nameplate1")
+        local _, second = ctx:unit("nameplate2")
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+        ctx[item[2]] = "nameplate1"
+        ctx:emit(item[3])
+        equal(BarVisible(first), 0, "disabled rule leaves names only")
+        ctx.addon.SetOption(item[1], true)
+        equal(BarVisible(first), 1)
+        equal(BarVisible(second), 0)
+        ctx[item[2]] = "nameplate2"
+        ctx:emit(item[3])
+        equal(BarVisible(first), 0)
+        equal(BarVisible(second), 1)
+        ctx[item[2]] = nil
+        ctx:emit(item[3])
+        equal(BarVisible(second), 0)
+    end
+end)
+
+test("new comparison rules exclude unsupported units and tolerate restricted comparisons", function()
+    local ctx = Context()
+    ctx.addon.SetOption("showFocus", true)
+    ctx.addon.SetOption("showMouseover", true)
+    local unit, frame = ctx:unit("nameplate1", { focus = SECRET })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(BarVisible(frame), 1, "unknown comparison preserves native bar")
+    unit.focus, unit.mouseover = false, API_ERROR
+    ctx:tick()
+    equal(BarVisible(frame), 1)
+    unit.focus, unit.mouseover = false, false
+    ctx:tick()
+    equal(BarVisible(frame), 0)
+    local _, minion = ctx:unit("nameplate2", { player = false, minion = true })
+    ctx.focus = "nameplate2"
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+    equal(minion.changes, 0, "excluded minion remains native")
+    ctx.addon.SetOption("includeMinions", true)
+    equal(BarVisible(minion), 1)
+    ctx.focus = nil
+    ctx:emit("PLAYER_FOCUS_CHANGED")
+    equal(BarVisible(minion), 0)
+    equal(ctx.healthReads, 0)
+end)
+
+test("NPC target exception is independent of player target focus and combat rules", function()
+    local ctx = Context()
+    ctx.addon.SetOption("includeNPCs", true)
+    ctx.addon.SetOption("showTarget", true)
+    ctx.addon.SetOption("showFocus", true)
+    ctx.addon.SetOption("showMouseover", true)
+    local unit, npc = ctx:unit("nameplate1", { player = false, combat = true })
+    ctx.target, ctx.focus, ctx.mouseover = "nameplate1", "nameplate1", "nameplate1"
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(BarVisible(npc), 0, "player conditions do not alter NPC mode")
+    ctx.addon.SetOption("npcShowTarget", true)
+    equal(BarVisible(npc), 1)
+    ctx.target = nil
+    ctx:emit("PLAYER_TARGET_CHANGED")
+    equal(BarVisible(npc), 0)
+    unit.target = SECRET
+    ctx:tick()
+    equal(BarVisible(npc), 1, "unknown target comparison stays conservative")
+    ctx.addon.SetOption("showNPCBars", true)
+    unit.target = false
+    ctx:tick()
+    equal(BarVisible(npc), 1)
+end)
+
+test("live game-setting conflicts are reported without automatic write battles", function()
+    local ctx = Context()
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    equal(ctx.addon.GetHealthState(), "ready")
+    local writes = #ctx.writes
+    ctx.cvars.nameplateShowFriendlyPlayers = "0"
+    ctx:emit("CVAR_UPDATE", "nameplateShowFriendlyPlayers", "0")
+    equal(ctx.addon.GetHealthState(), "conflict")
+    equal(#ctx.writes, writes, "external changes are observed without forcibly writing back")
+    local report = ctx.addon.BuildReport()
+    assert(report:find("nameplateShowFriendlyPlayers", 1, true))
+    ctx.addon.Repair()
+    equal(ctx.cvars.nameplateShowFriendlyPlayers, "1")
+    equal(ctx.addon.GetHealthState(), "ready")
+    ctx:command("off")
+    equal(ctx.cvars.nameplateShowFriendlyPlayers, "0", "repair retains the original restoration baseline")
+end)
+
+test("out-of-combat CVar failures and unavailable settings have truthful health states", function()
+    local ctx = Context()
+    ctx.failWrite = true
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    equal(ctx.addon.GetHealthState(), "error")
+    assert(ctx.addon.GetHealthSummary() ~= ctx.addon.L.UI_PENDING,
+        "a refused setting is not described as waiting for combat")
+    ctx.failWrite = false
+    ctx.addon.Repair()
+    equal(ctx.addon.GetHealthState(), "ready")
+    ctx.cvars.nameplateShowFriendlyPlayers = nil
+    ctx:emit("CVAR_UPDATE", "nameplateShowFriendlyPlayers")
+    equal(ctx.addon.GetHealthState(), "unavailable")
+    ctx.cvars.nameplateShowFriendlyPlayers = "1"
+    ctx:emit("CVAR_UPDATE", "nameplateShowFriendlyPlayers", "1")
+    equal(ctx.addon.GetHealthState(), "ready")
+    ctx.combat = true
+    ctx.addon.SetOption("includeNPCs", true)
+    equal(ctx.addon.GetHealthState(), "combat")
+    ctx.combat = false
+    ctx:emit("PLAYER_REGEN_ENABLED")
+    equal(ctx.addon.GetHealthState(), "ready")
+end)
+
+test("manual repair recovers a latched visual failure without retrying every tick", function()
+    local ctx = Context()
+    local _, frame = ctx:unit("nameplate1", { class = "MAGE" })
+    local originalSetAlpha = frame.decoration.SetAlpha
+    local calls = 0
+    frame.decoration.SetAlpha = function(self, alpha)
+        if alpha == 0 then calls = calls + 1; error("temporary visual refusal") end
+        return originalSetAlpha(self, alpha)
+    end
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    for _ = 1, 5 do ctx:tick() end
+    equal(calls, 1)
+    equal(BarVisible(frame), 1)
+    local before = ctx.addon.BuildReport()
+    assert(before:find("temporary visual refusal", 1, true))
+    frame.decoration.SetAlpha = originalSetAlpha
+    ctx.addon.Repair()
+    equal(BarVisible(frame), 0)
+    equal(frame.name.vertexColor[1], 0.25)
+    equal(ctx.healthReads, 0)
+end)
+
+test("presets apply behaviour in one visual reconciliation while preserving subtitle style", function()
+    local ctx = Context()
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    ctx.addon.SetMetricsEnabled(true)
+    ctx.addon.SetOption("showFocus", true)
+    ctx.addon.SetOption("subtitleSize", 20)
+    ctx.addon.ResetMetrics()
+    ctx.addon.ApplyPreset("minimal")
+    local db = ctx.addon.GetOptions()
+    equal(db.enabled, true)
+    equal(db.showGroup, false)
+    equal(db.showCombat, false)
+    equal(db.showTarget, false)
+    equal(db.showFocus, false)
+    equal(db.showMouseover, false)
+    assert(ctx.addon.GetMetrics().fullUpdates <= 1, "preset changes should be batched")
+    ctx.addon.ApplyPreset("group")
+    equal(db.showGroup, true)
+    equal(db.showCombat, false)
+    ctx.addon.ApplyPreset("exploration")
+    equal(db.includeNPCs, true)
+    equal(db.showNPCBars, false)
+    equal(db.showNPCTitle, true)
+    ctx.addon.ApplyPreset("default")
+    for key, expected in pairs(ctx.addon.DEFAULTS) do
+        if type(expected) == "boolean" and key ~= "subtitleBrackets" then equal(db[key], expected, key) end
+    end
+    equal(db.subtitleSize, 20, "presets preserve customized appearance")
+    ctx.addon.RestoreDefaults()
+    for key, expected in pairs(ctx.addon.DEFAULTS) do equal(db[key], expected, key) end
+    local writes = #ctx.writes
+    ctx.addon.ApplyPreset("invalid")
+    equal(#ctx.writes, writes)
+end)
+
+test("explicit profile copies preserve selectors and per-character game-setting ownership", function()
+    local ctx = Context()
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    local character = ctx.env.SmartFriendlyNameplatesDB
+    local originals = character.originalCVars
+    ctx.addon.SetOption("showFocus", true)
+    ctx.addon.SetOption("subtitleSize", 18)
+    ctx.addon.CopyProfile("global")
+    equal(ctx.addon.GetProfile(), "character")
+    local global = ctx.env.SmartFriendlyNameplatesGlobalDB.profile
+    for key in pairs(ctx.addon.DEFAULTS) do equal(global[key], character[key], key) end
+    equal(global.originalCVars, nil)
+    equal(global.profileScope, nil)
+    equal(character.originalCVars, originals)
+    ctx.addon.SetProfile("global")
+    ctx.addon.SetOption("showFocus", false)
+    ctx.addon.SetOption("subtitleSize", 14)
+    ctx.addon.CopyProfile("character")
+    equal(ctx.addon.GetProfile(), "global")
+    equal(character.showFocus, false)
+    equal(character.subtitleSize, 14)
+    equal(character.profileScope, "global")
+    equal(character.originalCVars, originals)
+    ctx.addon.SetProfile("character")
+    equal(ctx.addon.GetOptions().subtitleSize, 14)
+    ctx:command("off")
+    equal(ctx.cvars.nameplateShowFriendlyPlayers, "0")
+end)
+
+test("subtitle appearance applies live to addon labels and survives frame recycling", function()
+    local ctx = Context()
+    ctx.addon.SetOption("showGuild", true)
+    local unit, frame = ctx:unit("nameplate1", { guild = "Guild" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    local label = frame.extraRegions[1]
+    ctx.addon.SetOption("subtitleSize", 18)
+    ctx.addon.SetOption("subtitleOffset", 7)
+    ctx.addon.SetOption("subtitleRed", 0.2)
+    ctx.addon.SetOption("subtitleGreen", 0.4)
+    ctx.addon.SetOption("subtitleBlue", 0.6)
+    ctx.addon.SetOption("subtitleBrackets", false)
+    equal(label.fontSize, 18)
+    equal(label.point[5], -7)
+    equal(label.textColor[1], 0.2)
+    equal(label.textColor[2], 0.4)
+    equal(label.textColor[3], 0.6)
+    equal(label.text, "Guild")
+    unit.party = true
+    ctx:emit("GROUP_ROSTER_UPDATE")
+    equal(label.shown, false)
+    ctx:emit("NAME_PLATE_UNIT_REMOVED", "nameplate1")
+    local _, nextFrame = ctx:unit("nameplate2", { guild = "Next" }, frame)
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+    equal(nextFrame.extraRegions[1].text, "Next")
+    equal(nextFrame.extraRegions[1].fontSize, 18)
+    ctx.addon.RestoreDefaults()
+    equal(nextFrame.extraRegions[1].shown, false)
+    ctx.addon.SetOption("showGuild", true)
+    equal(nextFrame.extraRegions[1].text, "<Next>")
+    equal(nextFrame.extraRegions[1].fontSize, 12)
+    equal(nextFrame.extraRegions[1].point[5], -2)
+end)
+
+test("numeric preferences reject invalid values and repair malformed saved data", function()
+    local ctx = Context()
+    for key, values in pairs({
+        subtitleSize = { 7, 25, false, "18", 0 / 0, math.huge },
+        subtitleOffset = { -1, 13, false, "4" },
+        subtitleRed = { -0.1, 1.1, "0.5" },
+    }) do
+        local original = ctx.addon.GetOptions()[key]
+        for _, value in ipairs(values) do
+            ctx.addon.SetOption(key, value)
+            equal(ctx.addon.GetOptions()[key], original, key)
+        end
+    end
+    local reload = Context({ env = { SmartFriendlyNameplatesDB = {
+        subtitleSize = -100, subtitleOffset = math.huge, subtitleBlue = 0 / 0,
+    } } })
+    equal(reload.addon.GetOptions().subtitleSize, 12)
+    equal(reload.addon.GetOptions().subtitleOffset, 2)
+    equal(reload.addon.GetOptions().subtitleBlue, 0.7)
+end)
+
+test("optional performance counters measure operations and can be reset independently of profiles", function()
+    local ctx = Context()
+    equal(ctx.addon.MetricsEnabled(), false)
+    ctx.addon.SetMetricsEnabled(true)
+    local _, frame = ctx:unit("nameplate1", { class = "MAGE" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    local metrics = ctx.addon.GetMetrics()
+    assert(metrics.updates >= 1)
+    assert(metrics.alphaWrites >= 1)
+    assert(metrics.colorWrites >= 1)
+    ctx.addon.ResetMetrics()
+    ctx:tick()
+    metrics = ctx.addon.GetMetrics()
+    assert(metrics.updates >= 1)
+    equal(metrics.alphaWrites, 0)
+    equal(metrics.colorWrites, 0)
+    equal(BarVisible(frame), 0)
+    ctx.addon.SetMetricsEnabled(false)
+    ctx.addon.ResetMetrics()
+    ctx:tick()
+    equal(ctx.addon.GetMetrics().updates, 0)
+    equal(ctx.addon.GetOptions().metricsEnabled, nil, "instrumentation is session-only")
+end)
+
+test("explanations distinguish visibility rules and report remains safe for restricted units", function()
+    local ctx = Context()
+    local unit, frame = ctx:unit("nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    local idle = ctx.addon.ExplainUnit("nameplate1")
+    assert(type(idle) == "string" and idle ~= "")
+    unit.party = true
+    ctx:emit("GROUP_ROSTER_UPDATE")
+    local grouped = ctx.addon.ExplainUnit("nameplate1")
+    assert(type(grouped) == "string" and grouped ~= idle)
+    ctx.target = "nameplate1"
+    local report = ctx.addon.BuildReport()
+    assert(type(report) == "string" and report:find(ctx.addon.VERSION, 1, true))
+    assert(report:find("nameplateShowFriendlyPlayers", 1, true))
+    unit.party, unit.combat = SECRET, API_ERROR
+    assert(pcall(ctx.addon.BuildReport))
+    equal(ctx.healthReads, 0)
+    equal(frame.alpha, 1)
+end)
+
+test("copyable report dialog opens with current text and escape releases keyboard focus", function()
+    local ctx = Context()
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    ctx.addon.ShowReport()
+    local dialog = ctx.env.SmartFriendlyNameplatesReport
+    assert(dialog and dialog:IsShown())
+    local edit
+    for _, widget in ipairs(ctx.widgets) do
+        if widget.kind == "EditBox" and widget.text and widget.text:find(ctx.addon.VERSION, 1, true) then edit = widget end
+    end
+    assert(edit and edit.multiline and edit.highlighted and edit.focused)
+    edit.scripts.OnEscapePressed(edit)
+    equal(dialog:IsShown(), false)
+    equal(edit.focused, false)
+end)
+
+test("known guardian owner is revalidated with one lookup instead of rescanning the raid", function()
+    local ctx = Context()
+    ctx.addon.SetOption("includeMinions", true)
+    ctx.groupMembers, ctx.inRaid = 40, true
+    local unit, frame = ctx:unit("nameplate1", { player = false, minion = true, owner = "raid40" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(ctx.ownerChecks, 40)
+    equal(BarVisible(frame), 1)
+    local checks = ctx.ownerChecks
+    ctx:tick()
+    equal(ctx.ownerChecks - checks, 1, "a cached owner still gets a fresh safety check")
+    equal(BarVisible(frame), 1)
+    unit.owner = "outsideGroup"
+    ctx:tick()
+    equal(BarVisible(frame), 0, "ownership changes invalidate a previous success")
+    unit.owner = SECRET
+    ctx:tick()
+    equal(BarVisible(frame), 1, "an inaccessible owner is never treated as outside the group")
+    unit.owner = "raid40"
+    ctx:tick()
+    equal(BarVisible(frame), 1)
+    ctx.groupMembers = 2
+    ctx:emit("GROUP_ROSTER_UPDATE")
+    equal(BarVisible(frame), 0, "removed group tokens cannot satisfy a cached match")
+end)
+
+test("unit flag events preserve NPC title cache and missing-title retry throttle", function()
+    local ctx = Context()
+    ctx.addon.SetOption("includeNPCs", true)
+    local _, frame = ctx:unit("nameplate1", { player = false, tooltip = NPCTooltip("Vendor") })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(ctx.tooltipReads, 1)
+    for _ = 1, 4 do
+        ctx:emit("UNIT_FLAGS", "nameplate1")
+        ctx:emit("UNIT_FLAGS", "unrelatedUnit")
+        ctx:tick()
+    end
+    equal(ctx.tooltipReads, 1, "a cached title does not depend on combat flags")
+    equal(frame.extraRegions[1].text, "<Vendor>")
+    local unit = ctx.units.nameplate1
+    unit.tooltip = NPCTooltip(nil)
+    ctx:emit("UNIT_NAME_UPDATE", "nameplate1")
+    equal(ctx.tooltipReads, 2, "name changes legitimately invalidate the title")
+    for _ = 1, 4 do ctx:emit("UNIT_FLAGS", "nameplate1"); ctx:tick() end
+    equal(ctx.tooltipReads, 2, "flag events do not bypass the retry delay for a missing title")
+end)
+
+test("a native child added while filtered is hidden and retains its own restoration alpha", function()
+    local ctx = Context()
+    local _, frame = ctx:unit("nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    local child = { alpha = 0.6 }
+    function child:IsForbidden() return false end
+    function child:GetAlpha() return self.alpha end
+    function child:SetAlpha(value) self.alpha = value end
+    local originalChildren = frame.GetChildren
+    function frame:GetChildren() return child, originalChildren(self) end
+    ctx:tick()
+    equal(child.alpha, 0, "new native regions must not escape optimized updates")
+    ctx:command("off")
+    equal(child.alpha, 0.6, "the original alpha is captured at discovery")
+    equal(frame.name.shown, true)
+end)
+
+test("new controls use live profile values and render localized effective states", function()
+    for _, locale in ipairs(clientLocales) do
+        local ctx = Context(nil, { locale = locale })
+        local L = ctx.addon.L
+        ctx:emit("PLAYER_ENTERING_WORLD")
+        assert(ctx:hasText(L.UI_AUTO_SETUP))
+        assert(ctx:hasText(L.HEALTH_READY))
+        ctx:click(L.UI_FOCUS)
+        equal(ctx.addon.GetOptions().showFocus, true)
+        ctx:click(L.UI_MOUSEOVER)
+        equal(ctx.addon.GetOptions().showMouseover, true)
+        ctx:click(L.UI_METRICS)
+        equal(ctx.addon.MetricsEnabled(), true)
+        ctx:click(L.UI_PRESET_MINIMAL)
+        equal(ctx.addon.GetOptions().showGroup, false)
+        ctx:click(L.UI_PRESET_DEFAULT)
+        equal(ctx.addon.GetOptions().showGroup, true)
+        local slider
+        for _, widget in ipairs(ctx.widgets) do
+            if widget.kind == "Slider" and widget.minimum == 8 and widget.maximum == 24 then slider = widget end
+        end
+        assert(slider)
+        slider:SetValue(16)
+        equal(ctx.addon.GetOptions().subtitleSize, 16)
+        ctx.cvars.nameplateShowFriendlyPlayers = "0"
+        ctx:emit("CVAR_UPDATE", "nameplateShowFriendlyPlayers", "0")
+        assert(ctx:hasText(L.HEALTH_CONFLICT))
+        ctx:click(L.UI_REPAIR)
+        assert(ctx:hasText(L.HEALTH_READY))
+        ctx:click(L.UI_COPY_GLOBAL)
+        equal(ctx.env.SmartFriendlyNameplatesGlobalDB.profile.subtitleSize, 16)
+    end
+end)
+
+test("disabling a failed plate reports disabled after successful visual restoration", function()
+    local ctx = Context()
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    local _, frame = ctx:unit("nameplate1")
+    local nativeSetAlpha = frame.decoration.SetAlpha
+    frame.decoration.SetAlpha = function(self, alpha)
+        if alpha == 0 then error("temporary hide refusal") end
+        nativeSetAlpha(self, alpha)
+    end
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(ctx.addon.GetHealthState(), "error")
+    ctx:command("off")
+    equal(ctx.addon.GetHealthState(), "disabled")
+    equal(BarVisible(frame), 1)
+end)
+
+test("appearance-only changes in combat do not invent pending game settings", function()
+    local ctx = Context()
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    ctx.addon.SetOption("showGuild", true)
+    local _, frame = ctx:unit("nameplate1", { guild = "Example" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx.combat = true
+    local writes = #ctx.writes
+    ctx.addon.SetOption("subtitleRed", 0.2)
+    ctx.addon.SetOption("showFocus", true)
+    equal(#ctx.writes, writes)
+    local _, pending = ctx.addon.GetOptions()
+    equal(pending, false)
+    equal(ctx.addon.GetHealthState(), "ready")
+    equal(frame.extraRegions[1].textColor[1], 0.2)
+    ctx.cvars.nameplateShowFriendlyPlayers = nil
+    ctx:emit("CVAR_UPDATE", "nameplateShowFriendlyPlayers")
+    ctx.addon.SetOption("subtitleGreen", 0.3)
+    equal(ctx.addon.GetHealthState(), "unavailable", "unavailable is distinct from waiting for combat")
+end)
+
+test("repair preserves forbidden observations and missing plates are diagnosed explicitly", function()
+    local ctx = Context()
+    local _, _, protected = ctx:unit("nameplate1")
+    protected.forbidden = true
+    ctx:emit("FORBIDDEN_NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(ctx.addon.ExplainUnit("nameplate1"), "forbidden")
+    ctx.addon.Repair()
+    equal(ctx.addon.ExplainUnit("nameplate1"), "forbidden")
+    local report = ctx.addon.BuildReport()
+    assert(report:find(ctx.addon.L.REASON_FORBIDDEN, 1, true))
+    ctx:unit("target")
+    equal(ctx.addon.ExplainUnit("target"), "no-plate")
+    ctx:emit("FORBIDDEN_NAME_PLATE_UNIT_REMOVED", "nameplate1")
+    equal(ctx.addon.ExplainUnit("nameplate1"), "no-plate")
 end)
 
 print(string.format("%d/%d integration checks passed", passed, tests))

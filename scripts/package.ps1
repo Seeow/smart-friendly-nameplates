@@ -31,6 +31,8 @@ $files = @(
     @{ Source = Join-Path $addonRoot 'Localization.lua'; Name = "$addonName/Localization.lua" },
     @{ Source = Join-Path $addonRoot 'LocalesEurope.lua'; Name = "$addonName/LocalesEurope.lua" },
     @{ Source = Join-Path $addonRoot 'LocalesAsia.lua'; Name = "$addonName/LocalesAsia.lua" },
+    @{ Source = Join-Path $addonRoot 'DiagnosticsLocalization.lua'; Name = "$addonName/DiagnosticsLocalization.lua" },
+    @{ Source = Join-Path $addonRoot 'OptionsLocalization.lua'; Name = "$addonName/OptionsLocalization.lua" },
     @{ Source = Join-Path $projectRoot 'README.md'; Name = "$addonName/README.md" },
     @{ Source = Join-Path $projectRoot 'LICENSE'; Name = "$addonName/LICENSE" }
 )

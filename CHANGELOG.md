@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.2.0
+
+- Skip unchanged alpha, name-colour and subtitle writes while retaining periodic
+  checks that repair native visual resets. Target unit-event updates and reuse
+  group-owner information with live ownership checks.
+- Show the effective setup state: operational, waiting for combat, failed,
+  unavailable or changed elsewhere. Detect external game-setting changes without
+  repeatedly forcing addon values back.
+- Add setup retry and a selectable diagnostic report with display reasons,
+  historical-error context and optional per-session operation counters. Retry
+  rescans accessible nameplates paused after earlier errors.
+- Organize settings into sections, explain automatic game setup, show the active
+  visibility rules and clarify dimmed options' prerequisites.
+- Add atomic Minimalist, Group, Group and combat, and Exploration presets, plus
+  explicit preference copying between character and global profiles. Preserve
+  the active profile selection and per-character game-setting restoration state.
+- Add optional focus and mouseover health-bar rules for players and minions, and
+  an independent targeted-NPC bar exception. All three are disabled by default.
+- Add subtitle font size, vertical gap, RGB colour and angle-bracket controls for
+  guilds and NPC titles, without changing native name geometry.
+- Localize the new controls and diagnostics in all supported client languages.
+- Extend simulated integration checks and document in-game verification. Actual
+  rendering, secure-client behaviour and performance remain to be tested in game;
+  operation counts do not establish an FPS gain.
+
 ## 0.1.15
 
 - Rename the addon folder, TOC, main Lua file and command registry to

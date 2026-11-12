@@ -12,9 +12,9 @@ Blizzard's friendly player health bars for the players you want to see.
 | Outside your group and out of combat | Name only, coloured by class |
 
 The combat check concerns **that unit**, not your own combat state. Group,
-combat and current-target rules are independent, optional conditions.
+combat, current-target, focus and mouseover rules are independent, optional conditions.
 **Any enabled condition** keeps the full bar visible; otherwise the unit shows
-its name only. Turning all three
+its name only. Turning all visibility
 conditions off shows names only for all eligible units while the master
 filter is enabled.
 
@@ -27,8 +27,10 @@ Friendly NPC support has its own display mode: native health bars or names
 only, with NPC titles (for example, Weaponsmith) beneath the names when available.
 Name-only NPCs use the game's selection colour (green for friendly NPCs), with
 an independent switch enabled by default. Full bars retain normal name colours.
-The player/minion visibility conditions do
-not change this NPC mode. NPC support is disabled by default.
+The player/minion visibility conditions do not change this NPC mode. A separate,
+optional NPC-target rule can temporarily show the selected friendly NPC's full
+bar while the other NPCs remain names only. NPC support and the NPC-target rule
+are disabled by default.
 
 The addon uses Blizzard's existing nameplate text. It does not recreate the
 game engine's native 3D overhead names.
@@ -67,11 +69,17 @@ Replace the existing installation rather than adding a second copy.
 The filter, group condition, combat condition and class-coloured name-only text
 are enabled by default. Minion support is off by default. Existing users keep
 their preferences; use `/sfn on` if needed.
-The current-target rule and guild labels are off by default.
+The current-target, focus, mouseover and NPC-target rules and guild labels are
+off by default. The addon configures the necessary game options automatically;
+no prior visit to the game's nameplate settings is required.
 
 ## In-game options
 
 Open **Options → Add-ons → Smart Friendly Nameplates**, or type **`/sfn`**.
+The scrollable panel groups profiles, presets, player rules, minions, NPCs,
+appearance and diagnostics. A summary shows which player conditions currently
+keep bars visible. Preferences whose prerequisites are off are dimmed and
+explained; they remain editable for later use.
 
 - **Enable friendly nameplate filtering**: master switch. Other preferences are
   kept when it is off.
@@ -80,6 +88,10 @@ Open **Options → Add-ons → Smart Friendly Nameplates**, or type **`/sfn`**.
 - **Show health bars for units in combat**: use each unit's own combat state.
 - **Show health bar for current target**: show a full bar for your selected
   eligible friendly player or minion, even outside your group and out of combat.
+- **Show health bar for focus**: keep a full bar for the eligible friendly player
+  or minion set as your focus. Off by default.
+- **Show health bar on mouseover**: keep a full bar while the pointer is over an
+  eligible friendly player or minion. Off by default.
 - **Apply filtering to friendly player minions**: extend the same rules to pets,
   guardians and totems, without changing ordinary NPCs.
 - **Use class colours for names without health bars**: apply class colours only
@@ -90,22 +102,55 @@ Open **Options → Add-ons → Smart Friendly Nameplates**, or type **`/sfn`**.
   their display separately from players and minions.
 - **Show health bars for friendly NPCs**: keep native bars when checked; use
   names only when unchecked. Independent of group, combat and target conditions.
+- **Show health bar for targeted NPC**: in names-only NPC mode, temporarily show
+  a full bar for the friendly NPC you select. This does not change the separate
+  player/minion target rule. Off by default.
 - **Show title below name-only NPCs**: display the NPC's localized title beneath
   its visible name, when available. Requires NPC support and hidden health bars.
 - **Use native colours for name-only NPCs**: use the game's selection colour,
   green for friendly NPCs, while their health bar is hidden. Enabled by default.
+- **Subtitle appearance**: choose font size (8–24, default 12), gap below the
+  name (0–12, default 2), red/green/blue colour components (0–1, defaults
+  0.7/0.85/0.7), and whether to wrap the text in `<…>` (on by default). These
+  controls affect the addon's guild and NPC-title subtitles, not native names.
 - **Restore defaults**: enable filtering, group/combat conditions and class
-  colours; disable minions, target, guild and NPC support. NPC preferences default
-  to names only with titles when support is subsequently enabled.
-- **Print status** and **Inspect target**: print diagnostics in chat.
+  colours; disable minions, target/focus/mouseover rules, guild and NPC support.
+  NPC preferences default to names only with titles, with the NPC-target rule off.
+  Reset subtitle appearance too. Only the active profile changes.
+- **Print status** and **Inspect target**: print diagnostics and the reason for
+  a unit's display, including protected or paused nameplates.
+- **Retry setup**: reapply required game settings and rescan accessible
+  nameplates, including those paused after an earlier visual error.
+- **Copyable report**: open a selectable diagnostic report for bug reports.
+  Press Ctrl+C to copy it; Escape closes the window.
+- **Count work for performance checks**: optionally collect operation counts
+  for this session. Refresh or copy a report to read them; reset them before a
+  comparison. The counters do not measure FPS or CPU time.
 
 Changes apply immediately and are saved in the active profile. Changes to protected
-game settings wait until combat ends; the panel shows when changes are pending.
+game settings wait until combat ends. The panel distinguishes that wait from
+failed changes, unavailable settings and settings changed elsewhere. It shows
+the effective setup state rather than treating every requested change as applied.
 The panel scrolls to keep every option accessible and shares saved preferences
 with slash commands.
 Labels, descriptions, chat messages, warnings and diagnostics follow `GetLocale()`.
 There is no separate language preference to keep in sync with the game. Translated
 button labels wrap and the panel adjusts its layout to fit them.
+
+### Presets
+
+Preset buttons apply a complete visibility setup to the active profile in one
+update. They are optional; existing characters keep their preferences until a
+preset is selected.
+
+- **Minimalist**: names only for friendly players.
+- **Group**: full bars for party/raid members, names only for other players.
+- **Group and combat**: the default player visibility rules.
+- **Exploration**: names-only friendly NPCs with their titles, alongside the
+  default player visibility rules.
+
+Focus, mouseover and the separate NPC-target exception remain opt-in. Subtitle
+appearance is controlled separately from these visibility presets.
 
 ## Profiles
 
@@ -122,6 +167,12 @@ either one. All feature switches, including the master filter, belong to the
 active profile. **Restore defaults** only resets that profile and does not change
 the selection. The panel and `/sfn status` identify the active profile.
 
+**Copy to global** and **Copy to character** replace the destination profile's
+feature preferences with those of the active profile. Copying does not switch
+the active profile, transfer another character's original game settings, or
+change which profile a character selects. Existing destination preferences are
+overwritten only when you press the corresponding copy button.
+
 Shared settings become available to the next character after a normal logout or
 `/reload` saves them. Each character still keeps its own original game-setting
 values so disabling the addon restores the correct values for that character.
@@ -137,6 +188,10 @@ values so disabling the addon restores the correct values for that character.
 | `/sfn colors off` | Stop selective colouring and restore the previous global colour option |
 | `/sfn status` | Show version, settings and diagnostic information |
 | `/sfn debug` | Inspect group/combat information for your current target |
+| `/sfn retry` | Reapply setup and rescan accessible nameplates after an error or external change |
+| `/sfn report` | Open a selectable, copyable diagnostic report |
+| `/sfn metrics on` or `/sfn metrics off` | Enable or disable optional operation counters for this session |
+| `/sfn metrics reset` | Reset the operation counters |
 
 Turn the filter off with `/sfn off` **out of combat before uninstalling**. An
 addon that is no longer loaded cannot restore game settings.
@@ -151,9 +206,19 @@ Minion support also enables Blizzard's friendly player minion nameplates and
 restores that setting when disabled. Native minion subtype and distance rules
 still apply.
 NPC support likewise manages and restores `nameplateShowFriendlyNpcs`.
+Changes to these settings made elsewhere are detected without repeatedly forcing
+the addon's values back. The panel reports the mismatch; use **Retry setup** or
+`/sfn retry` when you want the addon's preferences reapplied. A later explicit
+option change or world entry can also reapply the settings it requires.
 
 - Game-setting changes requested during combat wait until combat ends.
 - Other players' combat and group changes are checked about every 0.2 seconds.
+- Unchanged visual values are not rewritten on every check. The periodic check
+  remains in place to repair native alpha resets; events for unrelated units do
+  not trigger a full update of every tracked nameplate.
+- Group owner tokens are reused where possible. A previously found minion owner
+  is checked again against current information; protected ownership data still
+  leaves the full bar visible.
 - Name colours are reapplied immediately after Blizzard updates names, including
   when hovering players or NPCs, so the periodic check does not cause a colour flash.
 - Name width and truncation remain under the game's control.
@@ -165,7 +230,8 @@ NPC support likewise manages and restores `nameplateShowFriendlyNpcs`.
   extraction must be verified in game. Missing or protected text and typed
   level/type/quest lines produce no subtitle. A title is cached until the
   nameplate is removed or its name changes; missing data is retried every 2 s.
-- Unknown or secret group/combat information leaves the full nameplate visible.
+- Unknown or secret group/combat or selected-unit comparison information leaves
+  the full nameplate visible when an enabled rule requires that information.
 - Only enabled conditions are checked. A disabled condition's restricted data
   does not affect visibility.
 - Health-based filtering is unavailable on this client: the unit API declares
@@ -214,7 +280,37 @@ separately; normal CI packaging runs never upload a release.
 
 For bug reports, include the client version, zone/instance type, `/sfn status`,
 and the first Lua error if present. Target the affected player and use
-`/sfn debug` to inspect their group/combat state.
+`/sfn debug` to inspect their state and the reason for their display, or attach the
+text from **Copyable report**. Reports contain diagnostic settings and current
+target state.
+
+### In-game verification
+
+The automated tests simulate APIs and events; they cannot validate the client's
+secure execution engine or the rendered result. Before treating a new build as
+verified in game, check:
+
+1. Fresh setup with friendly player, minion and NPC plates initially disabled in
+   the game options. Enable each corresponding addon option and check the actual
+   game setting and panel state; disable it and check restoration.
+2. Group/combat/target/focus/mouseover rules separately and together. Confirm
+   mouseover and focus exceptions affect eligible players/minions only, and the
+   NPC-target exception follows its independent switch.
+3. A game setting changed manually while the addon is active. Confirm a conflict
+   is reported without a repeated fight over the setting, then try **Retry setup**.
+   Repeat setup changes in combat and verify that only game-setting writes wait.
+4. Guild and NPC-title appearance at different interface scales, through bar
+   visibility changes and nameplate reuse. Check the report dialog with a long
+   report and a narrow or scaled interface.
+5. Town crowds, pets/guardians/totems, party/raid changes and protected nameplates
+   in instances. Protected plates must remain under the game's control.
+
+For repeatable performance checks, use the same scene, options and observation
+duration. Enable counters, reset them, wait without changing the setup, and copy
+the report. Compare operation counts between builds in a quiet area, a crowded
+town and a group with minions. Use the game's profiling tools separately if CPU
+or FPS measurements are needed. No FPS improvement is claimed from counter or
+simulated-test results alone.
 
 ## References
 
