@@ -3,6 +3,8 @@
 A lightweight, standalone **World of Warcraft: Forever** addon that keeps
 Blizzard's friendly player health bars for the players you want to see.
 
+[Download on CurseForge](https://www.curseforge.com/wow/addons/smart-friendly-nameplates)
+
 ## How it works
 
 | Friendly player, with default settings | Display |
