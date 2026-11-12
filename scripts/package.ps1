@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$addonName = 'FriendlyGroupCombat'
+$addonName = 'SmartFriendlyNameplates'
 $addonRoot = Join-Path $projectRoot $addonName
 $tocPath = Join-Path $addonRoot "$addonName.toc"
 $versionLine = Get-Content -LiteralPath $tocPath | Where-Object { $_ -match '^## Version: ' }

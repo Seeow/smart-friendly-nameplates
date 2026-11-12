@@ -1,10 +1,10 @@
-package-as: FriendlyGroupCombat
+package-as: SmartFriendlyNameplates
 enable-nolib-creation: no
 
 # Lift the existing addon directory into the package root. Root README and
 # LICENSE files remain alongside the TOC, without a second wrapper directory.
 move-folders:
-  FriendlyGroupCombat/FriendlyGroupCombat: FriendlyGroupCombat
+  SmartFriendlyNameplates/SmartFriendlyNameplates: SmartFriendlyNameplates
 
 ignore:
   - docs

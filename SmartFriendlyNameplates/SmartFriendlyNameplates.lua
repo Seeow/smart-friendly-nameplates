@@ -2,7 +2,7 @@
 -- WoW Forever 1.60.1. No dependency; only ordinary, accessible nameplates.
 local ADDON_NAME, addon = ...
 local L = addon.L
-local VERSION = "0.1.14"
+local VERSION = "0.1.15"
 addon.VERSION = VERSION
 local DEFAULTS = {
     enabled = true,
@@ -581,8 +581,8 @@ end
 addon.PrintStatus = Status
 addon.DebugTarget = DebugTarget
 
-SLASH_FRIENDLYGROUPCOMBAT1 = "/sfn"
-SlashCmdList.FRIENDLYGROUPCOMBAT = function(input)
+SLASH_SMARTFRIENDLYNAMEPLATES1 = "/sfn"
+SlashCmdList.SMARTFRIENDLYNAMEPLATES = function(input)
     if not db then return end
     local command, argument = (input or ""):lower():match("^%s*(%S*)%s*(%S*)")
     if command == "on" or command == "off" then
@@ -612,15 +612,15 @@ end
 driver:SetScript("OnEvent", function(_, event, unit)
     if event == "ADDON_LOADED" then
         if unit == ADDON_NAME then
-            FriendlyGroupCombatDB = type(FriendlyGroupCombatDB) == "table" and FriendlyGroupCombatDB or {}
-            characterDB = FriendlyGroupCombatDB
+            SmartFriendlyNameplatesDB = type(SmartFriendlyNameplatesDB) == "table" and SmartFriendlyNameplatesDB or {}
+            characterDB = SmartFriendlyNameplatesDB
             characterDB.nameWidthPercent = nil -- Remove the retired experimental setting.
             FillDefaults(characterDB)
             if type(characterDB.originalCVars) ~= "table" then characterDB.originalCVars = {} end
             if characterDB.profileScope ~= "global" then characterDB.profileScope = "character" end
-            FriendlyGroupCombatGlobalDB = type(FriendlyGroupCombatGlobalDB) == "table"
-                and FriendlyGroupCombatGlobalDB or {}
-            globalDB = FriendlyGroupCombatGlobalDB
+            SmartFriendlyNameplatesGlobalDB = type(SmartFriendlyNameplatesGlobalDB) == "table"
+                and SmartFriendlyNameplatesGlobalDB or {}
+            globalDB = SmartFriendlyNameplatesGlobalDB
             db = ProfileSettings(characterDB.profileScope)
             addon.RegisterOptions()
         end

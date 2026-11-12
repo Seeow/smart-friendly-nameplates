@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $outputRoot = (Resolve-Path -LiteralPath $PackageRoot).Path
-$addonName = 'FriendlyGroupCombat'
+$addonName = 'SmartFriendlyNameplates'
 $addonRoot = Join-Path $outputRoot $addonName
 $directories = @(Get-ChildItem -LiteralPath $outputRoot -Directory -Force)
 if ($directories.Count -ne 1 -or $directories[0].Name -cne $addonName) {
@@ -31,5 +31,9 @@ if ($toc -notmatch '(?m)^## Interface: 16001\s*$') {
 }
 if ($toc -notmatch '(?m)^## X-Curse-Project-ID: 1798982\s*$') {
     throw 'The package must point to CurseForge project 1798982.'
+}
+if ($toc -notmatch '(?m)^## SavedVariables: SmartFriendlyNameplatesGlobalDB\s*$' -or
+    $toc -notmatch '(?m)^## SavedVariablesPerCharacter: SmartFriendlyNameplatesDB\s*$') {
+    throw 'The package must declare global and character saved variables.'
 }
 Write-Output 'CurseForge package layout verified.'

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.15
+
+- Rename the addon folder, TOC, main Lua file and command registry to
+  SmartFriendlyNameplates. Update CI, packaging and installation instructions.
+- Rename preference tables to match the addon name.
+
 ## 0.1.14
 
 - Add a global preference profile shared by characters that select it, alongside

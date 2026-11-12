@@ -36,14 +36,14 @@ tested against this repository.
 
 ## Package layout
 
-`.pkgmeta` preserves the existing addon directory name and per-character saved
-variables. It lifts the nested addon folder into the package root and keeps the
+From 0.1.15, `.pkgmeta` uses `SmartFriendlyNameplates` as the installation folder.
+It lifts the nested addon folder into the package root and keeps the
 repository README and MIT licence alongside it:
 
 ```text
-FriendlyGroupCombat/
-  FriendlyGroupCombat.toc
-  FriendlyGroupCombat.lua
+SmartFriendlyNameplates/
+  SmartFriendlyNameplates.toc
+  SmartFriendlyNameplates.lua
   Options.lua
   Localization.lua
   LocalesEurope.lua
@@ -59,26 +59,26 @@ uses Release.
 
 ## Publish a version
 
-1. Update the version in both `FriendlyGroupCombat.toc` and the Lua `VERSION`
+1. Update the version in both `SmartFriendlyNameplates.toc` and the Lua `VERSION`
    constant, and add the version's notes to `CHANGELOG.md`.
 2. Run the Lua checks and build locally. The packaging script verifies that the
-   two version values match. For example, after changing them to `0.1.14`:
+   two version values match. For example, after changing them to `0.1.15`:
 
    ```powershell
-   ./scripts/package.ps1 -Tag v0.1.14
+   ./scripts/package.ps1 -Tag v0.1.15
    ```
 
 3. Commit and push the changes to `main`, and wait for its checks to pass.
 4. Create and push the matching annotated tag:
 
    ```sh
-   git tag -a v0.1.14 -m "Release 0.1.14"
-   git push origin v0.1.14
+   git tag -a v0.1.15 -m "Release 0.1.15"
+   git push origin v0.1.15
    ```
 
-For test releases, use matching versions/tags such as `0.1.14-beta.1` /
-`v0.1.14-beta.1`, or `0.1.14-alpha.1` / `v0.1.14-alpha.1`. The current prepared
-version is `0.1.14`; use its matching tag only if intentionally publishing it.
+For test releases, use matching versions/tags such as `0.1.15-beta.1` /
+`v0.1.15-beta.1`, or `0.1.15-alpha.1` / `v0.1.15-alpha.1`. The current prepared
+version is `0.1.15`; use its matching tag only if intentionally publishing it.
 
 5. Check the CurseForge file, its game version (**Forever 1.60.1**) and channel.
    File moderation still applies. Existing users receive the file according to

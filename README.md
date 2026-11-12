@@ -50,20 +50,19 @@ game engine's native 3D overhead names.
 ## Install
 
 1. Download this repository using **Code → Download ZIP**, or clone it.
-2. Copy the **`FriendlyGroupCombat`** folder into:
+2. Copy the **`SmartFriendlyNameplates`** folder into:
    ```text
    World of Warcraft/_forever_/Interface/AddOns/
    ```
 3. Check the resulting path:
    ```text
-   Interface/AddOns/FriendlyGroupCombat/FriendlyGroupCombat.toc
+   Interface/AddOns/SmartFriendlyNameplates/SmartFriendlyNameplates.toc
    ```
 4. Restart the game for the first installation and enable **Smart Friendly
    Nameplates** in the AddOns list. For an update, replace the files and `/reload`.
 
-The folder and saved-variable names are kept from the prototype so existing
-settings survive this rename. Replace an existing `FriendlyGroupCombat`
-installation; do not install a second copy under another folder name.
+The addon folder, TOC and saved-variable names use `SmartFriendlyNameplates`.
+Replace the existing installation rather than adding a second copy.
 
 The filter, group condition, combat condition and class-coloured name-only text
 are enabled by default. Minion support is off by default. Existing users keep
@@ -192,7 +191,7 @@ Run the integration checks and Lua syntax check from the repository root:
 
 ```sh
 lua5.1 tests/test_addon.lua
-luac5.1 -p FriendlyGroupCombat/*.lua
+luac5.1 -p SmartFriendlyNameplates/*.lua
 ```
 
 Lua 5.1 is the compatibility target. The test harness also runs on newer Lua

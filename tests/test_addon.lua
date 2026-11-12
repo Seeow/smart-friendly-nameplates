@@ -1,8 +1,8 @@
 -- Integration checks with a simulated WoW event loop. Lua 5.1+ / Fengari.
 local sources = {
-    "FriendlyGroupCombat/Localization.lua", "FriendlyGroupCombat/LocalesEurope.lua",
-    "FriendlyGroupCombat/LocalesAsia.lua", "FriendlyGroupCombat/FriendlyGroupCombat.lua",
-    "FriendlyGroupCombat/Options.lua",
+    "SmartFriendlyNameplates/Localization.lua", "SmartFriendlyNameplates/LocalesEurope.lua",
+    "SmartFriendlyNameplates/LocalesAsia.lua", "SmartFriendlyNameplates/SmartFriendlyNameplates.lua",
+    "SmartFriendlyNameplates/Options.lua",
 }
 local SECRET, API_ERROR = {}, {}
 local tests, passed = 0, 0
@@ -34,8 +34,8 @@ local function Context(previous, options)
     }
     local env = setmetatable({}, { __index = _G })
     ctx.env = env
-    env.FriendlyGroupCombatDB = previous and previous.env.FriendlyGroupCombatDB or nil
-    env.FriendlyGroupCombatGlobalDB = previous and previous.env.FriendlyGroupCombatGlobalDB or nil
+    env.SmartFriendlyNameplatesDB = previous and previous.env.SmartFriendlyNameplatesDB or nil
+    env.SmartFriendlyNameplatesGlobalDB = previous and previous.env.SmartFriendlyNameplatesGlobalDB or nil
     env.SlashCmdList = {}
     env.NamePlateSetupOptions = {}
     env.print = function(message) ctx.messages[#ctx.messages + 1] = message end
@@ -233,7 +233,7 @@ local function Context(previous, options)
         self.driver.scripts.OnUpdate(self.driver, 0.21)
     end
     function ctx:command(command)
-        env.SlashCmdList.FRIENDLYGROUPCOMBAT(command)
+        env.SlashCmdList.SMARTFRIENDLYNAMEPLATES(command)
     end
     function ctx:nativeNameUpdate(frame)
         env.CompactUnitFrame_UpdateName(frame)
@@ -339,9 +339,9 @@ local function Context(previous, options)
         else
             chunk = assert(loadfile(source, "t", env))
         end
-        chunk("FriendlyGroupCombat", addon)
+        chunk("SmartFriendlyNameplates", addon)
     end
-    ctx:emit("ADDON_LOADED", "FriendlyGroupCombat")
+    ctx:emit("ADDON_LOADED", "SmartFriendlyNameplates")
     return ctx
 end
 
@@ -802,9 +802,9 @@ end)
 
 test("only the public command is registered", function()
     local ctx = Context()
-    equal(ctx.env.SLASH_FRIENDLYGROUPCOMBAT1, "/sfn")
-    equal(ctx.env.SLASH_FRIENDLYGROUPCOMBAT2, nil)
-    equal(ctx.env.SLASH_FRIENDLYGROUPCOMBAT3, nil)
+    equal(ctx.env.SLASH_SMARTFRIENDLYNAMEPLATES1, "/sfn")
+    equal(ctx.env.SLASH_SMARTFRIENDLYNAMEPLATES2, nil)
+    equal(ctx.env.SLASH_SMARTFRIENDLYNAMEPLATES3, nil)
 end)
 
 test("mouseover colour refresh is corrected synchronously without a polling tick", function()
@@ -890,7 +890,7 @@ test("late-loaded native updater installs one hook and preserves existing settin
     ctx:emit("PLAYER_ENTERING_WORLD")
     ctx:emit("PLAYER_ENTERING_WORLD")
     equal(#ctx.nameHooks, 1)
-    equal(ctx.env.FriendlyGroupCombatDB.classColorsOnly, false)
+    equal(ctx.env.SmartFriendlyNameplatesDB.classColorsOnly, false)
 end)
 
 test("post-hook does not inspect untracked forbidden frames", function()
@@ -927,7 +927,7 @@ test("filter checkbox uses the same restoration path as slash commands", functio
     local _, frame = ctx:unit("nameplate1", { class = "MAGE" })
     ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
     ctx:click(FILTER)
-    equal(ctx.env.FriendlyGroupCombatDB.enabled, false)
+    equal(ctx.env.SmartFriendlyNameplatesDB.enabled, false)
     equal(BarVisible(frame), 1)
     equal(frame.name.vertexColor[1], 0)
     equal(ctx.cvars.nameplateShowFriendlyPlayers, "0")
@@ -943,7 +943,7 @@ test("colour checkbox changes live names and preserves filtering", function()
     local _, frame = ctx:unit("nameplate1", { class = "MAGE" })
     ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
     ctx:click(COLOURS)
-    equal(ctx.env.FriendlyGroupCombatDB.classColorsOnly, false)
+    equal(ctx.env.SmartFriendlyNameplatesDB.classColorsOnly, false)
     equal(BarVisible(frame), 0)
     equal(frame.name.vertexColor[1], 0)
     ctx:click(COLOURS)
@@ -973,8 +973,8 @@ test("panel changes survive reload and a colour preference is editable while dis
     equal(reloaded:widget(FILTER):GetChecked(), false)
     equal(reloaded:widget(COLOURS):GetChecked(), false)
     reloaded:click(COLOURS)
-    equal(reloaded.env.FriendlyGroupCombatDB.enabled, false)
-    equal(reloaded.env.FriendlyGroupCombatDB.classColorsOnly, true)
+    equal(reloaded.env.SmartFriendlyNameplatesDB.enabled, false)
+    equal(reloaded.env.SmartFriendlyNameplatesDB.classColorsOnly, true)
     equal(#reloaded.writes, 0)
 end)
 
@@ -1013,8 +1013,8 @@ test("default actions restore both preferences and diagnostic buttons print in c
     ctx:command("off")
     ctx:command("colors off")
     ctx.categories[1].panel.OnDefault()
-    equal(ctx.env.FriendlyGroupCombatDB.enabled, true)
-    equal(ctx.env.FriendlyGroupCombatDB.classColorsOnly, true)
+    equal(ctx.env.SmartFriendlyNameplatesDB.enabled, true)
+    equal(ctx.env.SmartFriendlyNameplatesDB.classColorsOnly, true)
     local messages = #ctx.messages
     ctx:click("Print status")
     assert(#ctx.messages > messages)
@@ -1239,7 +1239,7 @@ test("new preferences persist and defaults preserve the original behaviour", fun
 end)
 
 test("old saved preferences survive migration and new defaults are filled in", function()
-    local previous = { env = { FriendlyGroupCombatDB = { enabled = false, classColorsOnly = false } } }
+    local previous = { env = { SmartFriendlyNameplatesDB = { enabled = false, classColorsOnly = false } } }
     local ctx = Context(previous)
     equal(ctx:widget(FILTER):GetChecked(), false)
     equal(ctx:widget(COLOURS):GetChecked(), false)
@@ -1426,15 +1426,15 @@ test("pool reuse clears the old guild before another player or NPC", function()
 end)
 
 test("removed width setting is cleared and native name geometry is untouched", function()
-    local previous = { env = { FriendlyGroupCombatDB = {
+    local previous = { env = { SmartFriendlyNameplatesDB = {
         enabled = true, nameWidthPercent = 500, showGuild = true, showTarget = true,
     } } }
     local ctx = Context(previous)
-    equal(ctx.env.FriendlyGroupCombatDB.nameWidthPercent, nil)
+    equal(ctx.env.SmartFriendlyNameplatesDB.nameWidthPercent, nil)
     equal(ctx:widget(GUILD):GetChecked(), true)
     equal(ctx:widget(TARGET):GetChecked(), true)
     ctx.addon.SetOption("nameWidthPercent", 500)
-    equal(ctx.env.FriendlyGroupCombatDB.nameWidthPercent, nil)
+    equal(ctx.env.SmartFriendlyNameplatesDB.nameWidthPercent, nil)
     for _, widget in ipairs(ctx.widgets) do
         assert(widget.kind ~= "Slider", "retired slider still exists")
     end
@@ -1491,19 +1491,19 @@ test("French client localizes the panel and retains stable setting keys and comm
     local _, frame = ctx:unit("nameplate1")
     ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
     ctx:click(L.UI_ENABLE)
-    equal(ctx.env.FriendlyGroupCombatDB.enabled, false)
+    equal(ctx.env.SmartFriendlyNameplatesDB.enabled, false)
     equal(BarVisible(frame), 1)
     ctx:command("on")
-    equal(ctx.env.FriendlyGroupCombatDB.enabled, true)
+    equal(ctx.env.SmartFriendlyNameplatesDB.enabled, true)
     equal(BarVisible(frame), 0)
     ctx:click(L.UI_COLORS)
-    equal(ctx.env.FriendlyGroupCombatDB.classColorsOnly, false)
+    equal(ctx.env.SmartFriendlyNameplatesDB.classColorsOnly, false)
     ctx:command("colors on")
-    equal(ctx.env.FriendlyGroupCombatDB.classColorsOnly, true)
+    equal(ctx.env.SmartFriendlyNameplatesDB.classColorsOnly, true)
     equal(ctx.messages[#ctx.messages], "|cff66ccffSmart Friendly Nameplates:|r " .. L.CMD_COLORS_ON)
     ctx:command("help")
     assert(ctx.messages[#ctx.messages]:find(L.CMD_HELP, 1, true))
-    equal(ctx.env.SLASH_FRIENDLYGROUPCOMBAT1, "/sfn")
+    equal(ctx.env.SLASH_SMARTFRIENDLYNAMEPLATES1, "/sfn")
 end)
 
 test("French status, target diagnostics and combat deferral use localized text", function()
@@ -1803,18 +1803,18 @@ test("NPC preferences are translated, persist and return to safe defaults", func
     for _, locale in ipairs(clientLocales) do
         local ctx = Context(nil, { locale = locale })
         local L = ctx.addon.L
-        equal(ctx.env.FriendlyGroupCombatDB.includeNPCs, false)
+        equal(ctx.env.SmartFriendlyNameplatesDB.includeNPCs, false)
         ctx:click(L.UI_NPCS)
         ctx:click(L.UI_NPC_BARS)
         ctx:click(L.UI_NPC_TITLE)
         local reload = Context(ctx, { locale = locale })
-        equal(reload.env.FriendlyGroupCombatDB.includeNPCs, true)
-        equal(reload.env.FriendlyGroupCombatDB.showNPCBars, true)
-        equal(reload.env.FriendlyGroupCombatDB.showNPCTitle, false)
+        equal(reload.env.SmartFriendlyNameplatesDB.includeNPCs, true)
+        equal(reload.env.SmartFriendlyNameplatesDB.showNPCBars, true)
+        equal(reload.env.SmartFriendlyNameplatesDB.showNPCTitle, false)
         reload:click(L.UI_DEFAULTS)
-        equal(reload.env.FriendlyGroupCombatDB.includeNPCs, false)
-        equal(reload.env.FriendlyGroupCombatDB.showNPCBars, false)
-        equal(reload.env.FriendlyGroupCombatDB.showNPCTitle, true)
+        equal(reload.env.SmartFriendlyNameplatesDB.includeNPCs, false)
+        equal(reload.env.SmartFriendlyNameplatesDB.showNPCBars, false)
+        equal(reload.env.SmartFriendlyNameplatesDB.showNPCTitle, true)
         reload:command("status")
     end
 end)
@@ -1899,26 +1899,26 @@ end)
 test("NPC colour preference is translated, saved and enabled by restore defaults", function()
     for _, locale in ipairs(clientLocales) do
         local ctx = Context(nil, { locale = locale })
-        equal(ctx.env.FriendlyGroupCombatDB.npcNameColors, true)
+        equal(ctx.env.SmartFriendlyNameplatesDB.npcNameColors, true)
         ctx:click(ctx.addon.L.UI_NPC_COLORS)
         local reload = Context(ctx, { locale = locale })
-        equal(reload.env.FriendlyGroupCombatDB.npcNameColors, false)
+        equal(reload.env.SmartFriendlyNameplatesDB.npcNameColors, false)
         reload:click(reload.addon.L.UI_DEFAULTS)
-        equal(reload.env.FriendlyGroupCombatDB.npcNameColors, true)
+        equal(reload.env.SmartFriendlyNameplatesDB.npcNameColors, true)
     end
 end)
 
 test("profile migration keeps existing character preferences and CVar originals", function()
     local original = { nameplateShowFriendlyPlayers = { before = "0", applied = "1" } }
-    local ctx = Context({ env = { FriendlyGroupCombatDB = {
+    local ctx = Context({ env = { SmartFriendlyNameplatesDB = {
         enabled = false, classColorsOnly = false, includeNPCs = true, originalCVars = original,
     } } })
     equal(ctx.addon.GetProfile(), "character")
-    equal(ctx.addon.GetOptions(), ctx.env.FriendlyGroupCombatDB)
+    equal(ctx.addon.GetOptions(), ctx.env.SmartFriendlyNameplatesDB)
     equal(ctx.addon.GetOptions().includeNPCs, true)
     equal(ctx.addon.GetOptions().classColorsOnly, false)
-    equal(ctx.env.FriendlyGroupCombatDB.originalCVars, original)
-    equal(ctx.env.FriendlyGroupCombatGlobalDB.profile, nil, "global is seeded on first use only")
+    equal(ctx.env.SmartFriendlyNameplatesDB.originalCVars, original)
+    equal(ctx.env.SmartFriendlyNameplatesGlobalDB.profile, nil, "global is seeded on first use only")
     equal(#ctx.writes, 0, "registration does not change game settings")
 end)
 
@@ -1927,9 +1927,9 @@ test("first global selection copies preferences once and preserves an independen
     ctx.addon.SetOption("showGuild", true)
     ctx.addon.SetOption("includeNPCs", true)
     ctx.addon.SetProfile("global")
-    local shared = ctx.env.FriendlyGroupCombatGlobalDB.profile
+    local shared = ctx.env.SmartFriendlyNameplatesGlobalDB.profile
     equal(ctx.addon.GetOptions(), shared)
-    for key in pairs(ctx.addon.DEFAULTS) do equal(shared[key], ctx.env.FriendlyGroupCombatDB[key], key) end
+    for key in pairs(ctx.addon.DEFAULTS) do equal(shared[key], ctx.env.SmartFriendlyNameplatesDB[key], key) end
     equal(shared.originalCVars, nil)
     equal(shared.profileScope, nil)
     ctx.addon.SetOption("showGuild", false)
@@ -1942,7 +1942,7 @@ test("first global selection copies preferences once and preserves an independen
     equal(ctx.addon.GetOptions().showGuild, false)
     equal(ctx.addon.GetOptions().includeNPCs, false)
     equal(ctx.addon.GetOptions().showTarget, false)
-    equal(ctx.env.FriendlyGroupCombatGlobalDB.profile, shared, "later switches do not reseed")
+    equal(ctx.env.SmartFriendlyNameplatesGlobalDB.profile, shared, "later switches do not reseed")
 end)
 
 test("different characters can share the global profile without overwriting their own preferences", function()
@@ -1951,8 +1951,8 @@ test("different characters can share the global profile without overwriting thei
     first.addon.SetProfile("global")
     first.addon.SetOption("showTarget", true)
     local second = Context({ env = {
-        FriendlyGroupCombatGlobalDB = first.env.FriendlyGroupCombatGlobalDB,
-        FriendlyGroupCombatDB = { showGroup = false, showGuild = false },
+        SmartFriendlyNameplatesGlobalDB = first.env.SmartFriendlyNameplatesGlobalDB,
+        SmartFriendlyNameplatesDB = { showGroup = false, showGuild = false },
     } })
     equal(second.addon.GetProfile(), "character")
     equal(second.addon.GetOptions().showTarget, false)
@@ -1975,8 +1975,8 @@ test("global selection, panel edits and slash-command edits survive reload", fun
     ctx:click(GUILD)
     ctx:command("off")
     ctx:command("colors off")
-    equal(ctx.env.FriendlyGroupCombatDB.enabled, true, "personal master switch is preserved")
-    equal(ctx.env.FriendlyGroupCombatDB.showGuild, false)
+    equal(ctx.env.SmartFriendlyNameplatesDB.enabled, true, "personal master switch is preserved")
+    equal(ctx.env.SmartFriendlyNameplatesDB.showGuild, false)
     local reload = Context(ctx)
     equal(reload.addon.GetProfile(), "global")
     equal(reload:widget(reload.addon.L.UI_PROFILE_GLOBAL):GetChecked(), true)
@@ -1998,20 +1998,20 @@ test("Restore defaults only resets the active profile without changing its selec
     equal(ctx.addon.GetProfile(), "global")
     equal(ctx.addon.GetOptions().showCombat, true)
     equal(ctx.addon.GetOptions().includeNPCs, false)
-    equal(ctx.env.FriendlyGroupCombatDB.showCombat, false)
+    equal(ctx.env.SmartFriendlyNameplatesDB.showCombat, false)
     ctx.addon.SetOption("showGuild", true)
     ctx.addon.SetProfile("character")
     ctx.categories[1].panel.OnDefault()
     equal(ctx.addon.GetProfile(), "character")
     equal(ctx.addon.GetOptions().showCombat, true)
-    equal(ctx.env.FriendlyGroupCombatGlobalDB.profile.showGuild, true)
+    equal(ctx.env.SmartFriendlyNameplatesGlobalDB.profile.showGuild, true)
 end)
 
 test("profile switches preserve CVar ownership across enabled profiles and restore on disable", function()
     local ctx = Context()
     ctx.cvars.nameplateUseClassColorForFriendlyPlayerUnitNames = "1"
     ctx:emit("PLAYER_ENTERING_WORLD")
-    local originals = ctx.env.FriendlyGroupCombatDB.originalCVars
+    local originals = ctx.env.SmartFriendlyNameplatesDB.originalCVars
     ctx.addon.SetProfile("global")
     ctx.addon.SetOption("includeNPCs", true)
     equal(ctx.cvars.nameplateShowFriendlyNpcs, "1")
@@ -2019,15 +2019,15 @@ test("profile switches preserve CVar ownership across enabled profiles and resto
     equal(ctx.cvars.nameplateShowFriendlyNpcs, "0")
     ctx.addon.SetProfile("global")
     equal(ctx.cvars.nameplateShowFriendlyNpcs, "1")
-    equal(ctx.env.FriendlyGroupCombatDB.originalCVars, originals)
+    equal(ctx.env.SmartFriendlyNameplatesDB.originalCVars, originals)
     local reload = Context(ctx)
     reload:emit("PLAYER_ENTERING_WORLD")
     reload:command("off")
     equal(reload.cvars.nameplateShowFriendlyPlayers, "0")
     equal(reload.cvars.nameplateUseClassColorForFriendlyPlayerUnitNames, "1")
     equal(reload.cvars.nameplateShowFriendlyNpcs, "0")
-    equal(next(reload.env.FriendlyGroupCombatDB.originalCVars), nil)
-    equal(reload.env.FriendlyGroupCombatGlobalDB.profile.originalCVars, nil)
+    equal(next(reload.env.SmartFriendlyNameplatesDB.originalCVars), nil)
+    equal(reload.env.SmartFriendlyNameplatesGlobalDB.profile.originalCVars, nil)
 end)
 
 test("shared preferences never share another character's CVar restoration baseline", function()
@@ -2035,12 +2035,12 @@ test("shared preferences never share another character's CVar restoration baseli
     first.cvars.nameplateUseClassColorForFriendlyPlayerUnitNames = "1"
     first:emit("PLAYER_ENTERING_WORLD")
     first.addon.SetProfile("global")
-    local second = Context({ env = { FriendlyGroupCombatGlobalDB = first.env.FriendlyGroupCombatGlobalDB } })
+    local second = Context({ env = { SmartFriendlyNameplatesGlobalDB = first.env.SmartFriendlyNameplatesGlobalDB } })
     second:emit("PLAYER_ENTERING_WORLD")
     second.addon.SetProfile("global")
     second:command("off")
     equal(second.cvars.nameplateUseClassColorForFriendlyPlayerUnitNames, "0")
-    equal(first.env.FriendlyGroupCombatDB.originalCVars.nameplateUseClassColorForFriendlyPlayerUnitNames.before, "1")
+    equal(first.env.SmartFriendlyNameplatesDB.originalCVars.nameplateUseClassColorForFriendlyPlayerUnitNames.before, "1")
     local firstAgain = Context(first)
     firstAgain:emit("PLAYER_ENTERING_WORLD")
     equal(firstAgain.cvars.nameplateUseClassColorForFriendlyPlayerUnitNames, "1")
@@ -2097,21 +2097,21 @@ end)
 
 test("invalid saved profile data is repaired without losing valid character preferences", function()
     local ctx = Context({ env = {
-        FriendlyGroupCombatDB = { showGuild = true, profileScope = "unknown" },
-        FriendlyGroupCombatGlobalDB = false,
+        SmartFriendlyNameplatesDB = { showGuild = true, profileScope = "unknown" },
+        SmartFriendlyNameplatesGlobalDB = false,
     } })
     equal(ctx.addon.GetProfile(), "character")
     equal(ctx.addon.GetOptions().showGuild, true)
     ctx.addon.SetProfile("global")
     equal(ctx.addon.GetOptions().showGuild, true)
     local invalid = Context({ env = {
-        FriendlyGroupCombatDB = { profileScope = "global", showTarget = true },
-        FriendlyGroupCombatGlobalDB = { profile = "broken" },
+        SmartFriendlyNameplatesDB = { profileScope = "global", showTarget = true },
+        SmartFriendlyNameplatesGlobalDB = { profile = "broken" },
     } })
     equal(invalid.addon.GetOptions().showTarget, true)
     local incomplete = Context({ env = {
-        FriendlyGroupCombatDB = { profileScope = "global" },
-        FriendlyGroupCombatGlobalDB = { profile = { enabled = false, showTarget = "wrong" } },
+        SmartFriendlyNameplatesDB = { profileScope = "global" },
+        SmartFriendlyNameplatesGlobalDB = { profile = { enabled = false, showTarget = "wrong" } },
     } })
     equal(incomplete.addon.GetOptions().enabled, false)
     equal(incomplete.addon.GetOptions().showTarget, false)
@@ -2124,7 +2124,7 @@ test("no-op and invalid profile selections do not write settings", function()
     ctx.addon.SetProfile(false)
     equal(ctx.addon.GetProfile(), "character")
     equal(#ctx.writes, 0)
-    equal(ctx.env.FriendlyGroupCombatGlobalDB.profile, nil)
+    equal(ctx.env.SmartFriendlyNameplatesGlobalDB.profile, nil)
 end)
 
 test("all locales expose the active profile in the panel and diagnostics", function()
