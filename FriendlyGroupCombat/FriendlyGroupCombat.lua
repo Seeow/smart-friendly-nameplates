@@ -2,7 +2,7 @@
 -- WoW Forever 1.60.1. No dependency; only ordinary, accessible nameplates.
 local ADDON_NAME, addon = ...
 local L = addon.L
-local VERSION = "0.1.13"
+local VERSION = "0.1.14"
 addon.VERSION = VERSION
 local DEFAULTS = {
     enabled = true,
@@ -29,7 +29,7 @@ local CVARS = {
 }
 
 local driver = CreateFrame("Frame")
-local db
+local db, characterDB, globalDB
 local plates, forbidden = {}, {}
 local nameOnlyFrames = setmetatable({}, { __mode = "k" })
 local nameColors = setmetatable({}, { __mode = "k" })
@@ -444,14 +444,16 @@ local function ApplyCVars()
     for _, setting in ipairs(CVARS) do
         local name = setting.name
         local current, known = GetValue(name)
-        local saved = db.originalCVars[name]
+        -- Restoration state belongs to this character's game settings, never
+        -- to the shared preference profile or to the currently selected mode.
+        local saved = characterDB.originalCVars[name]
         local wanted = db.enabled and (not setting.option or db[setting.option])
         if known and current ~= nil then
             if wanted then
                 if current ~= setting.value then
                     if not saved then
                         saved = { before = current, applied = setting.value }
-                        db.originalCVars[name] = saved
+                        characterDB.originalCVars[name] = saved
                     end
                     if not WriteValue(name, setting.value) then pendingCVars = true end
                 end
@@ -459,7 +461,7 @@ local function ApplyCVars()
                 if current == saved.applied and not WriteValue(name, saved.before) then
                     pendingCVars = true
                 else
-                    db.originalCVars[name] = nil
+                    characterDB.originalCVars[name] = nil
                 end
             end
         elseif wanted then
@@ -467,6 +469,41 @@ local function ApplyCVars()
         end
     end
     RefreshOptions()
+end
+
+local function FillDefaults(profile)
+    for key, value in pairs(DEFAULTS) do
+        if type(profile[key]) ~= type(value) then profile[key] = value end
+    end
+end
+
+local function ProfileSettings(scope)
+    if scope == "global" then
+        if type(globalDB.profile) ~= "table" then
+            -- Seed once, when someone first chooses Global. Copy only feature
+            -- preferences, excluding CVar originals and the profile selector.
+            globalDB.profile = {}
+            for key in pairs(DEFAULTS) do globalDB.profile[key] = characterDB[key] end
+        end
+        FillDefaults(globalDB.profile)
+        return globalDB.profile
+    end
+    return characterDB
+end
+
+function addon.GetProfile()
+    return characterDB and characterDB.profileScope
+end
+
+function addon.SetProfile(scope)
+    if not characterDB or (scope ~= "global" and scope ~= "character") then return end
+    if scope == characterDB.profileScope then return end
+    RestoreAll()
+    characterDB.profileScope = scope
+    db = ProfileSettings(scope)
+    for _, record in pairs(plates) do record.npcTitle, record.nextTitleRead = nil, nil end
+    ApplyCVars()
+    UpdateAll()
 end
 
 -- Both the options panel and slash commands use the same update path.
@@ -502,6 +539,8 @@ local function Status()
     local version, build, _, interface = GetBuildInfo()
     Say(string.format(L.STATUS_HEADER, VERSION, db.enabled and L.VALUE_ENABLED or L.VALUE_DISABLED,
         version, build, interface))
+    Say(string.format(L.STATUS_PROFILE, characterDB.profileScope == "global"
+        and L.VALUE_PROFILE_GLOBAL or L.VALUE_PROFILE_CHARACTER))
     Say(string.format(L.STATUS_COUNTS, Count(plates), Count(nameOnlyFrames), Count(forbidden)))
     Say(string.format(L.STATUS_COLORS, db.classColorsOnly and L.VALUE_YES or L.VALUE_NO))
     Say(string.format(L.STATUS_GUILD, db.showGuild and L.VALUE_YES or L.VALUE_NO))
@@ -574,12 +613,15 @@ driver:SetScript("OnEvent", function(_, event, unit)
     if event == "ADDON_LOADED" then
         if unit == ADDON_NAME then
             FriendlyGroupCombatDB = type(FriendlyGroupCombatDB) == "table" and FriendlyGroupCombatDB or {}
-            db = FriendlyGroupCombatDB
-            db.nameWidthPercent = nil -- Remove the retired experimental setting.
-            for key, value in pairs(DEFAULTS) do
-                if type(db[key]) ~= type(value) then db[key] = value end
-            end
-            if type(db.originalCVars) ~= "table" then db.originalCVars = {} end
+            characterDB = FriendlyGroupCombatDB
+            characterDB.nameWidthPercent = nil -- Remove the retired experimental setting.
+            FillDefaults(characterDB)
+            if type(characterDB.originalCVars) ~= "table" then characterDB.originalCVars = {} end
+            if characterDB.profileScope ~= "global" then characterDB.profileScope = "character" end
+            FriendlyGroupCombatGlobalDB = type(FriendlyGroupCombatGlobalDB) == "table"
+                and FriendlyGroupCombatGlobalDB or {}
+            globalDB = FriendlyGroupCombatGlobalDB
+            db = ProfileSettings(characterDB.profileScope)
             addon.RegisterOptions()
         end
         InstallNameHook()

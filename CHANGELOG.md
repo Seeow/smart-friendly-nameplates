@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.14
+
+- Add a global preference profile shared by characters that select it, alongside
+  each character's independent settings. Existing characters keep their settings.
+- Seed the global profile from the current character's preferences on first use;
+  later switches preserve both profiles. Show the active profile in settings and
+  diagnostics. Restore defaults only affects the selected profile.
+- Keep game-setting restoration state per character, including while using the
+  shared profile. Switching in combat defers CVar writes until combat ends.
+- Translate profile controls and status messages into every supported language.
+
 ## 0.1.13
 
 - Use the game's native selection colour for name-only friendly NPCs (green),

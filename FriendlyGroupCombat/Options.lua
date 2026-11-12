@@ -5,6 +5,7 @@ local TITLE = "Smart Friendly Nameplates"
 local panel, category, content, scroll, state
 local checks, rows = {}, {}
 local buttonRow
+local globalProfile, profileState
 
 local function Text(template, text, left, spacing)
     local label = content:CreateFontString(nil, "ARTWORK", template)
@@ -14,7 +15,7 @@ local function Text(template, text, left, spacing)
     return label
 end
 
-local function Checkbox(key, title, description)
+local function Checkbox(key, title, description, callback)
     local check = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
     check.Text:SetText(title)
     check.Text:SetFontObject("GameFontNormal")
@@ -22,13 +23,14 @@ local function Checkbox(key, title, description)
     check.Text:ClearAllPoints()
     check.Text:SetPoint("TOPLEFT", check, "TOPRIGHT", 4, -8)
     check:SetScript("OnClick", function(self)
-        addon.SetOption(key, not not self:GetChecked())
+        local checked = not not self:GetChecked()
+        if callback then callback(checked) else addon.SetOption(key, checked) end
     end)
     local detail = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     detail:SetJustifyH("LEFT")
     detail:SetText(description)
     rows[#rows + 1] = { check = check, detail = detail }
-    checks[key] = check
+    if key then checks[key] = check end
     return check
 end
 
@@ -93,6 +95,10 @@ function addon.RefreshOptions()
     local options, pending = addon.GetOptions()
     if not options then return end
     for key, check in pairs(checks) do check:SetChecked(options[key]) end
+    local shared = addon.GetProfile() == "global"
+    globalProfile:SetChecked(shared)
+    profileState:SetText(string.format(L.UI_PROFILE_CURRENT,
+        shared and L.VALUE_PROFILE_GLOBAL or L.VALUE_PROFILE_CHARACTER))
     -- Preferences remain editable while the master filter is off.
     if pending then
         state:SetText(L.UI_PENDING)
@@ -127,6 +133,11 @@ function addon.RegisterOptions()
 
     Text("GameFontNormalLarge", TITLE .. " |cff888888v" .. addon.VERSION .. "|r")
     Text("GameFontHighlightSmall", L.UI_INTRO)
+
+    globalProfile = Checkbox(nil, L.UI_PROFILE_GLOBAL, L.UI_PROFILE_GLOBAL_DESC, function(checked)
+        addon.SetProfile(checked and "global" or "character")
+    end)
+    profileState = Text("GameFontHighlightSmall", "")
 
     Checkbox("enabled", L.UI_ENABLE,
         L.UI_ENABLE_DESC)

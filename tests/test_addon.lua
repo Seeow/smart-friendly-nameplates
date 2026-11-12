@@ -35,6 +35,7 @@ local function Context(previous, options)
     local env = setmetatable({}, { __index = _G })
     ctx.env = env
     env.FriendlyGroupCombatDB = previous and previous.env.FriendlyGroupCombatDB or nil
+    env.FriendlyGroupCombatGlobalDB = previous and previous.env.FriendlyGroupCombatGlobalDB or nil
     env.SlashCmdList = {}
     env.NamePlateSetupOptions = {}
     env.print = function(message) ctx.messages[#ctx.messages + 1] = message end
@@ -1904,6 +1905,240 @@ test("NPC colour preference is translated, saved and enabled by restore defaults
         equal(reload.env.FriendlyGroupCombatDB.npcNameColors, false)
         reload:click(reload.addon.L.UI_DEFAULTS)
         equal(reload.env.FriendlyGroupCombatDB.npcNameColors, true)
+    end
+end)
+
+test("profile migration keeps existing character preferences and CVar originals", function()
+    local original = { nameplateShowFriendlyPlayers = { before = "0", applied = "1" } }
+    local ctx = Context({ env = { FriendlyGroupCombatDB = {
+        enabled = false, classColorsOnly = false, includeNPCs = true, originalCVars = original,
+    } } })
+    equal(ctx.addon.GetProfile(), "character")
+    equal(ctx.addon.GetOptions(), ctx.env.FriendlyGroupCombatDB)
+    equal(ctx.addon.GetOptions().includeNPCs, true)
+    equal(ctx.addon.GetOptions().classColorsOnly, false)
+    equal(ctx.env.FriendlyGroupCombatDB.originalCVars, original)
+    equal(ctx.env.FriendlyGroupCombatGlobalDB.profile, nil, "global is seeded on first use only")
+    equal(#ctx.writes, 0, "registration does not change game settings")
+end)
+
+test("first global selection copies preferences once and preserves an independent character profile", function()
+    local ctx = Context()
+    ctx.addon.SetOption("showGuild", true)
+    ctx.addon.SetOption("includeNPCs", true)
+    ctx.addon.SetProfile("global")
+    local shared = ctx.env.FriendlyGroupCombatGlobalDB.profile
+    equal(ctx.addon.GetOptions(), shared)
+    for key in pairs(ctx.addon.DEFAULTS) do equal(shared[key], ctx.env.FriendlyGroupCombatDB[key], key) end
+    equal(shared.originalCVars, nil)
+    equal(shared.profileScope, nil)
+    ctx.addon.SetOption("showGuild", false)
+    ctx.addon.SetOption("includeNPCs", false)
+    ctx.addon.SetProfile("character")
+    equal(ctx.addon.GetOptions().showGuild, true)
+    equal(ctx.addon.GetOptions().includeNPCs, true)
+    ctx.addon.SetOption("showTarget", true)
+    ctx.addon.SetProfile("global")
+    equal(ctx.addon.GetOptions().showGuild, false)
+    equal(ctx.addon.GetOptions().includeNPCs, false)
+    equal(ctx.addon.GetOptions().showTarget, false)
+    equal(ctx.env.FriendlyGroupCombatGlobalDB.profile, shared, "later switches do not reseed")
+end)
+
+test("different characters can share the global profile without overwriting their own preferences", function()
+    local first = Context()
+    first.addon.SetOption("showGuild", true)
+    first.addon.SetProfile("global")
+    first.addon.SetOption("showTarget", true)
+    local second = Context({ env = {
+        FriendlyGroupCombatGlobalDB = first.env.FriendlyGroupCombatGlobalDB,
+        FriendlyGroupCombatDB = { showGroup = false, showGuild = false },
+    } })
+    equal(second.addon.GetProfile(), "character")
+    equal(second.addon.GetOptions().showTarget, false)
+    second.addon.SetProfile("global")
+    equal(second.addon.GetOptions().showTarget, true)
+    equal(second.addon.GetOptions().showGuild, true)
+    equal(second.addon.GetOptions().showGroup, true, "second character does not replace global settings")
+    second.addon.SetOption("showCombat", false)
+    second.addon.SetProfile("character")
+    equal(second.addon.GetOptions().showGroup, false)
+    equal(second.addon.GetOptions().showCombat, true)
+    local firstAgain = Context(first)
+    equal(firstAgain.addon.GetProfile(), "global")
+    equal(firstAgain.addon.GetOptions().showCombat, false)
+end)
+
+test("global selection, panel edits and slash-command edits survive reload", function()
+    local ctx = Context()
+    ctx:click(ctx.addon.L.UI_PROFILE_GLOBAL)
+    ctx:click(GUILD)
+    ctx:command("off")
+    ctx:command("colors off")
+    equal(ctx.env.FriendlyGroupCombatDB.enabled, true, "personal master switch is preserved")
+    equal(ctx.env.FriendlyGroupCombatDB.showGuild, false)
+    local reload = Context(ctx)
+    equal(reload.addon.GetProfile(), "global")
+    equal(reload:widget(reload.addon.L.UI_PROFILE_GLOBAL):GetChecked(), true)
+    equal(reload:widget(FILTER):GetChecked(), false)
+    equal(reload:widget(COLOURS):GetChecked(), false)
+    equal(reload:widget(GUILD):GetChecked(), true)
+    reload:click(reload.addon.L.UI_PROFILE_GLOBAL)
+    equal(reload:widget(FILTER):GetChecked(), true)
+    equal(reload:widget(COLOURS):GetChecked(), true)
+    equal(reload:widget(GUILD):GetChecked(), false)
+end)
+
+test("Restore defaults only resets the active profile without changing its selection", function()
+    local ctx = Context()
+    ctx.addon.SetOption("showCombat", false)
+    ctx.addon.SetProfile("global")
+    ctx.addon.SetOption("includeNPCs", true)
+    ctx:click(ctx.addon.L.UI_DEFAULTS)
+    equal(ctx.addon.GetProfile(), "global")
+    equal(ctx.addon.GetOptions().showCombat, true)
+    equal(ctx.addon.GetOptions().includeNPCs, false)
+    equal(ctx.env.FriendlyGroupCombatDB.showCombat, false)
+    ctx.addon.SetOption("showGuild", true)
+    ctx.addon.SetProfile("character")
+    ctx.categories[1].panel.OnDefault()
+    equal(ctx.addon.GetProfile(), "character")
+    equal(ctx.addon.GetOptions().showCombat, true)
+    equal(ctx.env.FriendlyGroupCombatGlobalDB.profile.showGuild, true)
+end)
+
+test("profile switches preserve CVar ownership across enabled profiles and restore on disable", function()
+    local ctx = Context()
+    ctx.cvars.nameplateUseClassColorForFriendlyPlayerUnitNames = "1"
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    local originals = ctx.env.FriendlyGroupCombatDB.originalCVars
+    ctx.addon.SetProfile("global")
+    ctx.addon.SetOption("includeNPCs", true)
+    equal(ctx.cvars.nameplateShowFriendlyNpcs, "1")
+    ctx.addon.SetProfile("character")
+    equal(ctx.cvars.nameplateShowFriendlyNpcs, "0")
+    ctx.addon.SetProfile("global")
+    equal(ctx.cvars.nameplateShowFriendlyNpcs, "1")
+    equal(ctx.env.FriendlyGroupCombatDB.originalCVars, originals)
+    local reload = Context(ctx)
+    reload:emit("PLAYER_ENTERING_WORLD")
+    reload:command("off")
+    equal(reload.cvars.nameplateShowFriendlyPlayers, "0")
+    equal(reload.cvars.nameplateUseClassColorForFriendlyPlayerUnitNames, "1")
+    equal(reload.cvars.nameplateShowFriendlyNpcs, "0")
+    equal(next(reload.env.FriendlyGroupCombatDB.originalCVars), nil)
+    equal(reload.env.FriendlyGroupCombatGlobalDB.profile.originalCVars, nil)
+end)
+
+test("shared preferences never share another character's CVar restoration baseline", function()
+    local first = Context()
+    first.cvars.nameplateUseClassColorForFriendlyPlayerUnitNames = "1"
+    first:emit("PLAYER_ENTERING_WORLD")
+    first.addon.SetProfile("global")
+    local second = Context({ env = { FriendlyGroupCombatGlobalDB = first.env.FriendlyGroupCombatGlobalDB } })
+    second:emit("PLAYER_ENTERING_WORLD")
+    second.addon.SetProfile("global")
+    second:command("off")
+    equal(second.cvars.nameplateUseClassColorForFriendlyPlayerUnitNames, "0")
+    equal(first.env.FriendlyGroupCombatDB.originalCVars.nameplateUseClassColorForFriendlyPlayerUnitNames.before, "1")
+    local firstAgain = Context(first)
+    firstAgain:emit("PLAYER_ENTERING_WORLD")
+    equal(firstAgain.cvars.nameplateUseClassColorForFriendlyPlayerUnitNames, "1")
+end)
+
+test("profile switches in combat apply visuals now and reconcile only the final CVar state later", function()
+    local ctx = Context()
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    ctx.addon.SetProfile("global")
+    ctx.addon.SetOption("enabled", false)
+    ctx.addon.SetProfile("character")
+    local _, frame = ctx:unit("nameplate1", { class = "MAGE" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(BarVisible(frame), 0)
+    ctx.combat = true
+    local writes = #ctx.writes
+    ctx.addon.SetProfile("global")
+    equal(BarVisible(frame), 1)
+    equal(#ctx.writes, writes)
+    ctx.addon.SetProfile("character")
+    equal(BarVisible(frame), 0)
+    ctx.addon.SetProfile("global")
+    ctx.combat = false
+    ctx:emit("PLAYER_REGEN_ENABLED")
+    equal(ctx.cvars.nameplateShowFriendlyPlayers, "0")
+    equal(ctx.addon.GetProfile(), "global")
+    local _, pending = ctx.addon.GetOptions()
+    equal(pending, false)
+end)
+
+test("switching profiles refreshes player and NPC rules, colours and subtitles immediately", function()
+    local ctx = Context()
+    local _, player = ctx:unit("nameplate1", { party = true, guild = "Guild", class = "MAGE" })
+    local _, npc = ctx:unit("nameplate2", { player = false, tooltip = NPCTooltip("Vendor") })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+    equal(BarVisible(player), 1)
+    equal(BarVisible(npc), 1)
+    ctx.addon.SetProfile("global")
+    ctx.addon.SetOption("showGroup", false)
+    ctx.addon.SetOption("showGuild", true)
+    ctx.addon.SetOption("includeNPCs", true)
+    equal(BarVisible(player), 0)
+    equal(player.extraRegions[1].text, "<Guild>")
+    equal(player.name.vertexColor[1], 0.25)
+    equal(BarVisible(npc), 0)
+    equal(npc.extraRegions[1].text, "<Vendor>")
+    ctx.addon.SetProfile("character")
+    equal(BarVisible(player), 1)
+    equal(BarVisible(npc), 1)
+    equal(player.extraRegions[1].shown, false)
+    equal(npc.extraRegions[1].shown, false)
+end)
+
+test("invalid saved profile data is repaired without losing valid character preferences", function()
+    local ctx = Context({ env = {
+        FriendlyGroupCombatDB = { showGuild = true, profileScope = "unknown" },
+        FriendlyGroupCombatGlobalDB = false,
+    } })
+    equal(ctx.addon.GetProfile(), "character")
+    equal(ctx.addon.GetOptions().showGuild, true)
+    ctx.addon.SetProfile("global")
+    equal(ctx.addon.GetOptions().showGuild, true)
+    local invalid = Context({ env = {
+        FriendlyGroupCombatDB = { profileScope = "global", showTarget = true },
+        FriendlyGroupCombatGlobalDB = { profile = "broken" },
+    } })
+    equal(invalid.addon.GetOptions().showTarget, true)
+    local incomplete = Context({ env = {
+        FriendlyGroupCombatDB = { profileScope = "global" },
+        FriendlyGroupCombatGlobalDB = { profile = { enabled = false, showTarget = "wrong" } },
+    } })
+    equal(incomplete.addon.GetOptions().enabled, false)
+    equal(incomplete.addon.GetOptions().showTarget, false)
+end)
+
+test("no-op and invalid profile selections do not write settings", function()
+    local ctx = Context()
+    ctx.addon.SetProfile("character")
+    ctx.addon.SetProfile("invalid")
+    ctx.addon.SetProfile(false)
+    equal(ctx.addon.GetProfile(), "character")
+    equal(#ctx.writes, 0)
+    equal(ctx.env.FriendlyGroupCombatGlobalDB.profile, nil)
+end)
+
+test("all locales expose the active profile in the panel and diagnostics", function()
+    for _, locale in ipairs(clientLocales) do
+        local ctx = Context(nil, { locale = locale })
+        local L = ctx.addon.L
+        assert(ctx:hasText(string.format(L.UI_PROFILE_CURRENT, L.VALUE_PROFILE_CHARACTER)))
+        ctx:click(L.UI_PROFILE_GLOBAL)
+        assert(ctx:hasText(string.format(L.UI_PROFILE_CURRENT, L.VALUE_PROFILE_GLOBAL)))
+        ctx:command("status")
+        local expected = string.format(L.STATUS_PROFILE, L.VALUE_PROFILE_GLOBAL)
+        local found = false
+        for _, message in ipairs(ctx.messages) do if message:find(expected, 1, true) then found = true end end
+        equal(found, true)
     end
 end)
 

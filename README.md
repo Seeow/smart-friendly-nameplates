@@ -100,13 +100,32 @@ Open **Options → Add-ons → Smart Friendly Nameplates**, or type **`/sfn`**.
   to names only with titles when support is subsequently enabled.
 - **Print status** and **Inspect target**: print diagnostics in chat.
 
-Changes apply immediately and are saved per character. Changes to protected
+Changes apply immediately and are saved in the active profile. Changes to protected
 game settings wait until combat ends; the panel shows when changes are pending.
 The panel scrolls to keep every option accessible and shares saved preferences
 with slash commands.
 Labels, descriptions, chat messages, warnings and diagnostics follow `GetLocale()`.
 There is no separate language preference to keep in sync with the game. Translated
 button labels wrap and the panel adjusts its layout to fit them.
+
+## Profiles
+
+Use **Use global profile** at the top of `/sfn` to choose where settings are saved:
+
+- **Unchecked — Character:** use this character's independent preferences.
+- **Checked — Global:** share preferences with other characters that also select
+  Global, across realms within the same WoW account and installation.
+
+Existing preferences remain in the Character profile, selected by default.
+The first time Global is selected, it starts as a copy of that character's
+current settings. Later switches preserve both profiles without copying over
+either one. All feature switches, including the master filter, belong to the
+active profile. **Restore defaults** only resets that profile and does not change
+the selection. The panel and `/sfn status` identify the active profile.
+
+Shared settings become available to the next character after a normal logout or
+`/reload` saves them. Each character still keeps its own original game-setting
+values so disabling the addon restores the correct values for that character.
 
 ## Commands
 

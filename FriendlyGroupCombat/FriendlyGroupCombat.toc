@@ -12,9 +12,10 @@
 ## Notes-zhCN: 根据队伍、战斗或目标状态筛选友方玩家及其仆从的血条。输入 /sfn 进行设置。
 ## Notes-zhTW: 依據隊伍、戰鬥或目標狀態篩選友方玩家及其僕從的生命條。輸入 /sfn 進行設定。
 ## Author: Seeow
-## Version: 0.1.13
+## Version: 0.1.14
 ## X-Curse-Project-ID: 1798982
 ## SavedVariablesPerCharacter: FriendlyGroupCombatDB
+## SavedVariables: FriendlyGroupCombatGlobalDB
 
 Localization.lua
 LocalesEurope.lua
