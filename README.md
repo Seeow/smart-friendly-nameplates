@@ -257,6 +257,42 @@ Lua 5.1 is the compatibility target. The test harness also runs on newer Lua
 interpreters or Fengari; those do not reproduce WoW's secure execution engine.
 GitHub Actions runs the tests using Lua 5.1.
 
+### Local installation
+
+Initialize your local configuration with PowerShell:
+
+```powershell
+./scripts/setup.ps1
+```
+
+The setup script copies `.env.example` to `.env` in the repository root. It can
+be run again safely: an existing `.env` is preserved. It works regardless of your
+working directory and supports `-WhatIf` to preview the copy.
+
+Set `GAME_ROOT` in `.env` to your game client directory (the folder containing
+`Interface`, not `Interface/AddOns`). The `.env` file is ignored by Git. Then install:
+
+```powershell
+./scripts/install-local.ps1
+```
+
+The script reads `.env` from the repository root regardless of your working
+directory. An explicit `-GameRoot` argument takes precedence over the `GAME_ROOT`
+environment variable, which takes precedence over `.env`. Without a configured
+path, the script stops with setup instructions.
+
+Use one `KEY=value` assignment per line. Blank lines and full-line `#` comments
+are allowed. Values may have matching single or double quotes; spaces and
+backslashes are preserved literally. Shell commands and variable references are
+not expanded; put comments on separate lines.
+
+Installation copies the addon, README and licence into
+`<GAME_ROOT>/Interface/AddOns/SmartFriendlyNameplates` and verifies the copied
+files with SHA-256 hashes. Saved settings are preserved. Run `/reload` if the game
+is open. Local configuration and the example file are excluded from addon packages.
+
+### Packaging
+
 Build an installable ZIP with PowerShell:
 
 ```powershell

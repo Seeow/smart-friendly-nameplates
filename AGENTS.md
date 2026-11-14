@@ -1,20 +1,26 @@
-# Instructions de travail
+# Working Instructions
 
-## Installation locale systématique
+## Required Local Installation
 
-L’utilisateur demande de mettre à jour l’addon dans son jeu à chaque modification.
-Après les vérifications adaptées au changement, exécuter `./scripts/install-local.ps1`
-pour copier la version courante dans :
+The user requests that the addon in their game be updated after every change.
+After running checks appropriate to the change, run `./scripts/install-local.ps1`
+to copy the current version to:
 
-`C:\Program Files (x86)\World of Warcraft\_forever_\Interface\AddOns\SmartFriendlyNameplates`
+`<GAME_ROOT>/Interface/AddOns/SmartFriendlyNameplates`
 
-Cette copie est autorisée de façon permanente ; utiliser l’élévation du sandbox
-si nécessaire. Vérifier que les fichiers installés correspondent aux sources et
-signaler tout échec d’installation. Rappeler `/reload` pour charger les changements
-si le jeu est ouvert. Préserver les réglages sauvegardés du joueur.
+Run `./scripts/setup.ps1` to create `.env` from `.env.example` if needed; an existing
+configuration is preserved. Configure the local game client directory using
+`GAME_ROOT` in the repository-root `.env` file. The installer also accepts the `GAME_ROOT`
+environment variable or an explicit `-GameRoot` override. Keep machine-specific
+paths in local configuration rather than tracked files.
 
-## Sous-agents
+This copy operation is permanently authorized; use sandbox elevation if necessary.
+Verify that the installed files match the sources and report any installation
+failure. Remind the user to run `/reload` to load the changes if the game is open.
+Preserve the player's saved settings.
 
-L’utilisateur autorise l’utilisation autonome de sous-agents lorsque cela améliore
-la qualité, la rapidité ou la fiabilité du travail. Éviter les délégations inutiles
-pour les tâches simples et vérifier les résultats intégrés.
+## Subagents
+
+The user authorizes autonomous use of subagents when it improves the quality,
+speed, or reliability of the work. Avoid unnecessary delegation for simple tasks
+and verify the integrated results.

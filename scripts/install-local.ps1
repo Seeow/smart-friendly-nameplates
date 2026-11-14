@@ -1,10 +1,37 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [string]$GameRoot = 'C:\Program Files (x86)\World of Warcraft\_forever_'
+    [string]$GameRoot
 )
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
+if (-not $PSBoundParameters.ContainsKey('GameRoot')) {
+    $GameRoot = $env:GAME_ROOT
+    $envPath = Join-Path $projectRoot '.env'
+    if ([string]::IsNullOrWhiteSpace($GameRoot) -and (Test-Path -LiteralPath $envPath -PathType Leaf)) {
+        $lineNumber = 0
+        foreach ($line in Get-Content -LiteralPath $envPath) {
+            $lineNumber++
+            $line = $line.Trim()
+            if (-not $line -or $line.StartsWith('#')) { continue }
+            if ($line -notmatch '^(?<Key>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<Value>.*)$') {
+                throw "Invalid .env assignment on line $lineNumber. Use KEY=value."
+            }
+            $key = $Matches['Key']
+            $value = $Matches['Value'].Trim()
+            if ($value.StartsWith('"') -or $value.StartsWith("'")) {
+                if ($value.Length -lt 2 -or $value[$value.Length - 1] -cne $value[0]) {
+                    throw "Unclosed .env quote on line $lineNumber."
+                }
+                $value = $value.Substring(1, $value.Length - 2)
+            }
+            if ($key -ceq 'GAME_ROOT') { $GameRoot = $value }
+        }
+    }
+}
+if ([string]::IsNullOrWhiteSpace($GameRoot)) {
+    throw 'Run ./scripts/setup.ps1, then set GAME_ROOT in the repository-root .env file. Alternatively, set the GAME_ROOT environment variable or pass -GameRoot.'
+}
 $addonName = 'SmartFriendlyNameplates'
 $sourceRoot = Join-Path $projectRoot $addonName
 $addonsRoot = Join-Path $GameRoot 'Interface/AddOns'

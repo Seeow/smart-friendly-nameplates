@@ -8,6 +8,8 @@ move-folders:
 
 ignore:
   - AGENTS.md
+  - .env
+  - .env.example
   - docs
   - scripts
   - tests
