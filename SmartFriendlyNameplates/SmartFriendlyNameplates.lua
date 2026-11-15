@@ -38,6 +38,7 @@ local CVARS = {
     { name = "nameplateUseClassColorForFriendlyPlayerUnitNames", value = "0", option = "classColorsOnly" },
     { name = "nameplateShowFriendlyPlayerMinions", value = "1", option = "includeMinions" },
     { name = "nameplateShowFriendlyNpcs", value = "1", option = "includeNPCs" },
+    { name = "nameplateSimplifiedTypes", value = "0", enforce = true },
 }
 
 local driver = CreateFrame("Frame")
@@ -891,7 +892,7 @@ addon.GetOptions = function()
     return db, pendingCVars
 end
 
-local SETTING_LABELS = { "SETTING_PLAYERS", "SETTING_NAME_MODE", "SETTING_COLORS", "SETTING_MINIONS", "SETTING_NPCS" }
+local SETTING_LABELS = { "SETTING_PLAYERS", "SETTING_NAME_MODE", "SETTING_COLORS", "SETTING_MINIONS", "SETTING_NPCS", "SETTING_SIMPLIFICATION" }
 function addon.GetHealthState()
     if not db then return "unavailable", {} end
     local issues, state = {}, nil
@@ -1153,7 +1154,14 @@ driver:SetScript("OnEvent", function(_, event, unit)
                 cvarProblems[setting.name] = nil
                 local value = GetValue(setting.name)
                 if db.enabled and (not setting.option or db[setting.option]) and value ~= setting.value then
-                    Warn("conflict-" .. setting.name, L.CMD_CONFLICT)
+                    if setting.enforce and value ~= nil then
+                        -- Simplified plates hide names; keep this menu at None.
+                        -- ApplyCVars defers the protected change during combat.
+                        ApplyCVars()
+                        UpdateAll()
+                    else
+                        Warn("conflict-" .. setting.name, L.CMD_CONFLICT)
+                    end
                 end
                 RefreshOptions()
                 return

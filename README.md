@@ -195,11 +195,17 @@ While enabled, the addon turns friendly player nameplates on and the global
 name-only option off. Selective colouring also keeps the global **Use Class
 Color for Names** option off, applying colour directly to name-only text.
 Previous values are saved per character, including across `/reload`.
+The addon also sets **Options → Gameplay → Nameplates → Simplify Nameplates**
+to **None**, clearing all four categories while the filter is enabled. Simplified
+nameplates hide names, which prevents names-only display. The previous selection
+is restored when the filter is disabled. Re-enabling any simplification category
+while the filter is active clears the selection again; changes requested in
+combat wait until combat ends.
 Minion support also enables Blizzard's friendly player minion nameplates and
 restores that setting when disabled. Native minion subtype and distance rules
 still apply.
 NPC support likewise manages and restores `nameplateShowFriendlyNpcs`.
-Changes to these settings made elsewhere are detected without repeatedly forcing
+Changes to the other settings made elsewhere are detected without repeatedly forcing
 the addon's values back. The panel reports the mismatch; use **Retry setup** or
 `/sfn retry` when you want the addon's preferences reapplied. A later explicit
 option change or world entry can also reapply the settings it requires.
@@ -242,7 +248,7 @@ option change or world entry can also reapply the settings it requires.
   full bar visible.
 - Unknown or secret class/colour information leaves the native colour intact.
 - Hidden health bars can still occupy stacking space and retain their normal
-  click area. Native name-display, distance and simplified-style rules apply.
+  click area. Native name-display and distance rules still apply.
 - Avoid other addons that also change friendly nameplate visibility or opacity.
 
 Only visual C API methods are used to filter plates, center names and colour

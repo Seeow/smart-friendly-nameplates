@@ -30,6 +30,7 @@ local function Context(previous, options)
             nameplateShowFriendlyPlayerMinions = "0",
             nameplateShowEnemies = "1",
             nameplateShowFriendlyNpcs = "0",
+            nameplateSimplifiedTypes = "0",
             colorblindmode = "0",
         },
     }
@@ -977,6 +978,111 @@ test("original CVars survive reload and later off", function()
     reloaded:command("off")
     equal(reloaded.cvars.nameplateShowFriendlyPlayers, "0")
     equal(reloaded.cvars.nameplateShowOnlyNameForFriendlyPlayerUnits, "1")
+end)
+
+test("every simplification selection is cleared while enabled and restored on off", function()
+    for mask = 0, 15 do
+        local ctx = Context()
+        ctx.cvars.nameplateSimplifiedTypes = tostring(mask)
+        ctx:emit("PLAYER_ENTERING_WORLD")
+        equal(ctx.cvars.nameplateSimplifiedTypes, "0")
+        equal(ctx.addon.GetHealthState(), "ready")
+        assert(ctx.addon.BuildReport():find("nameplateSimplifiedTypes", 1, true))
+        ctx:command("off")
+        equal(ctx.cvars.nameplateSimplifiedTypes, tostring(mask))
+        equal(ctx.addon.GetHealthState(), "disabled")
+    end
+end)
+
+test("simplification stays disabled after external changes without periodic write spam", function()
+    local ctx = Context()
+    ctx.cvars.nameplateSimplifiedTypes = "15"
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    local writes = #ctx.writes
+    ctx.env.C_CVar.SetCVar("nameplateSimplifiedTypes", "3")
+    equal(ctx.cvars.nameplateSimplifiedTypes, "0")
+    equal(#ctx.writes, writes + 2, "one external write and one corrective write")
+    writes = #ctx.writes
+    ctx:tick()
+    ctx:emit("CVAR_UPDATE", "nameplateSimplifiedTypes", "0")
+    equal(#ctx.writes, writes)
+    ctx:command("off")
+    equal(ctx.cvars.nameplateSimplifiedTypes, "15", "keep the original selection")
+    ctx.env.C_CVar.SetCVar("nameplateSimplifiedTypes", "2")
+    equal(ctx.cvars.nameplateSimplifiedTypes, "2", "disabled addon does not enforce None")
+end)
+
+test("simplification restoration survives reload and profile switches", function()
+    local first = Context()
+    first.cvars.nameplateSimplifiedTypes = "13"
+    first:emit("PLAYER_ENTERING_WORLD")
+    first.addon.SetProfile("global")
+    local reloaded = Context(first)
+    reloaded:emit("PLAYER_ENTERING_WORLD")
+    equal(reloaded.cvars.nameplateSimplifiedTypes, "0")
+    reloaded.addon.SetProfile("character")
+    reloaded:command("off")
+    equal(reloaded.cvars.nameplateSimplifiedTypes, "13")
+    reloaded:command("on")
+    equal(reloaded.cvars.nameplateSimplifiedTypes, "0")
+    reloaded:command("off")
+    equal(reloaded.cvars.nameplateSimplifiedTypes, "13")
+end)
+
+test("simplification setup, external changes and restoration defer protected combat writes", function()
+    local ctx = Context()
+    ctx.cvars.nameplateSimplifiedTypes = "7"
+    ctx.combat = true
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    equal(#ctx.writes, 0)
+    equal(ctx.addon.GetHealthState(), "combat")
+    ctx.combat = false
+    ctx:emit("PLAYER_REGEN_ENABLED")
+    equal(ctx.cvars.nameplateSimplifiedTypes, "0")
+    ctx.combat = true
+    local writes = #ctx.writes
+    ctx.cvars.nameplateSimplifiedTypes = "15"
+    ctx:emit("CVAR_UPDATE", "NAMEPLATESIMPLIFIEDTYPES", "15")
+    equal(#ctx.writes, writes)
+    equal(ctx.addon.GetHealthState(), "combat")
+    ctx.combat = false
+    ctx:emit("PLAYER_REGEN_ENABLED")
+    equal(ctx.cvars.nameplateSimplifiedTypes, "0")
+    ctx.combat = true
+    ctx:command("off")
+    equal(ctx.cvars.nameplateSimplifiedTypes, "0")
+    equal(ctx.addon.GetHealthState(), "combat")
+    ctx.combat = false
+    ctx:emit("PLAYER_REGEN_ENABLED")
+    equal(ctx.cvars.nameplateSimplifiedTypes, "7")
+end)
+
+test("failed simplification setup is diagnosed, retried and restored", function()
+    local ctx = Context(nil, { locale = "frFR" })
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    ctx.cvars.nameplateSimplifiedTypes = "15"
+    ctx.failWrite = true
+    ctx:emit("CVAR_UPDATE", "nameplateSimplifiedTypes", "15")
+    equal(ctx.addon.GetHealthState(), "error")
+    assert(ctx.addon.GetHealthSummary():find(ctx.addon.L.SETTING_SIMPLIFICATION, 1, true))
+    ctx.failWrite = false
+    ctx.addon.Repair()
+    equal(ctx.cvars.nameplateSimplifiedTypes, "0")
+    equal(ctx.addon.GetHealthState(), "ready")
+    ctx:command("off")
+    equal(ctx.cvars.nameplateSimplifiedTypes, "15")
+end)
+
+test("missing simplification setting is reported without an invalid write", function()
+    local ctx = Context()
+    ctx.cvars.nameplateSimplifiedTypes = nil
+    ctx:emit("PLAYER_ENTERING_WORLD")
+    equal(ctx.addon.GetHealthState(), "unavailable")
+    for _, name in ipairs(ctx.writes) do assert(name ~= "nameplateSimplifiedTypes") end
+    ctx.cvars.nameplateSimplifiedTypes = "4"
+    ctx:emit("CVAR_UPDATE", "nameplateSimplifiedTypes", "4")
+    equal(ctx.cvars.nameplateSimplifiedTypes, "0")
+    equal(ctx.addon.GetHealthState(), "ready")
 end)
 
 test("manual CVar edits are respected on off", function()

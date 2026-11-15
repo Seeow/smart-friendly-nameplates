@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Disable all native nameplate simplification categories while filtering is
+  enabled so names-only units keep their names. Restore the previous selection
+  on disable, preserve it across reloads and defer protected changes in combat.
 - Center name-only text with every Blizzard nameplate style, including Large
   and Block. Preserve vertical placement and restore the current style's native
   layout when health bars return, including after changing styles.
