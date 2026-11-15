@@ -208,11 +208,15 @@ local function NPCTitle(frame, unit)
     local colorblind = Read(C_CVar.GetCVar, "colorblindmode")
     if colorblind ~= "0" and colorblind ~= "1" then return end
     -- In colourblind mode the native tooltip inserts a reaction line after
-    -- the name. Titles are untyped; a level/type/quest line is never a title.
+    -- the name. Titles are untyped; reject explicitly typed non-title lines.
     local line = Field(lines, colorblind == "1" and 3 or 2)
     if type(line) ~= "table" or Field(line, "type") ~= types.None then return end
     local text = Field(line, "leftText")
     if type(text) ~= "string" or text == "" then return end
+    -- This client can also return the level as an untyped line when no title
+    -- exists. Use the game's localized label, as in ElvUI's GetTitleNPC.
+    if type(LEVEL) == "string" and LEVEL ~= ""
+        and text:lower():find(LEVEL:lower(), 1, true) then return end
     record.npcTitle = text
     return text
 end

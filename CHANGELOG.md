@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Exclude NPC level text from titles even when the tooltip returns it as an
+  untyped line, using the game's localized level label.
+
 ## 0.2.1
 
 - Match the game's settings presentation with aligned label/control columns,

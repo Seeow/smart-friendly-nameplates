@@ -1880,6 +1880,45 @@ test("NPC title lookup rejects missing, secret, malformed and non-title lines", 
     end
 end)
 
+test("NPC titles reject localized level text even on untyped tooltip lines", function()
+    for _, sample in ipairs({
+        { "frFR", "Niveau", "Niveau 5" },
+        { "frFR", "Niveau", "|cffffff00Niveau 5 Humanoïde|r" },
+        { "enUS", "Level", "Level 60 (Elite)" },
+        { "enUS", "Level", "LEVEL ??" },
+        { "deDE", "Stufe", "Stufe 10" },
+        { "koKR", "레벨", "5 레벨" },
+        { "zhCN", "等级", "等级5" },
+    }) do
+        for _, colorblind in ipairs({ false, true }) do
+            local ctx = Context(nil, { locale = sample[1] })
+            ctx.env.LEVEL = sample[2]
+            ctx.cvars.colorblindmode = colorblind and "1" or "0"
+            ctx.addon.SetOption("includeNPCs", true)
+            local unit, frame = ctx:unit("nameplate1", { player = false,
+                tooltip = NPCTooltip("Marchand d’armes", colorblind) })
+            ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+            local label = frame.extraRegions[1]
+            equal(label.text, "<Marchand d’armes>")
+            -- A reused title position can contain an untyped level line instead.
+            unit.tooltip = NPCTooltip(sample[3], colorblind)
+            unit.tooltip.lines[#unit.tooltip.lines] = { type = 0, leftText = "Not a title" }
+            ctx:emit("UNIT_NAME_UPDATE", "nameplate1")
+            equal(label.shown, false, "level text must hide the previous subtitle")
+            equal(BarVisible(frame), 0, "NPC name-only mode stays active")
+            local reads = ctx.tooltipReads
+            ctx:nativeNameUpdate(frame)
+            ctx:tick()
+            equal(ctx.tooltipReads, reads, "rejected levels retain the missing-title retry delay")
+            equal(#ctx.messages, 0)
+            unit.tooltip = NPCTooltip("Marchand d’armes", colorblind)
+            ctx:emit("UNIT_NAME_UPDATE", "nameplate1")
+            equal(label.text, "<Marchand d’armes>")
+            equal(label.shown, true)
+        end
+    end
+end)
+
 test("missing tooltip APIs or enum keep NPC names available without titles", function()
     for _, missing in ipairs({ "C_TooltipInfo", "Enum" }) do
         local ctx = Context()

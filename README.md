@@ -220,8 +220,9 @@ option change or world entry can also reapply the settings it requires.
   appear for minions or ordinary NPCs.
 - NPC titles use the expected title line in `C_TooltipInfo.GetUnit`, accounting
   for colourblind mode. There is no dedicated title API; this position-based
-  extraction must be verified in game. Missing or protected text and typed
-  level/type/quest lines produce no subtitle. A title is cached until the
+  extraction must be verified in game. Missing or protected text, typed
+  level/type/quest lines and text containing the game's localized level label
+  (such as "Level" or "Niveau") produce no subtitle. A title is cached until the
   nameplate is removed or its name changes; missing data is retried every 2 s.
 - Unknown or secret group/combat or selected-unit comparison information leaves
   the full nameplate visible when an enabled rule requires that information.
