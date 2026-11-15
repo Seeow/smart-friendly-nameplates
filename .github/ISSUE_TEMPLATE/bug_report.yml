@@ -6,6 +6,7 @@ body:
     attributes:
       value: |
         Please search existing issues before opening a new report.
+        Only **What happened?** is required; the other fields are optional but help diagnose the problem.
         This addon targets WoW Forever and Blizzard's default nameplates.
         Friendly nameplates protected by the game in dungeons and raids remain under Blizzard's control.
   - type: textarea
@@ -24,34 +25,26 @@ body:
         1. Enable ...
         2. Target or approach ...
         3. Observe ...
-    validations:
-      required: true
   - type: input
     id: addon-version
     attributes:
       label: Addon version
-      description: Find the installed version in /sfn status or the AddOns list.
-    validations:
-      required: true
+      description: Find the installed version in "/sfn status" or the AddOns list.
   - type: input
     id: client-version
     attributes:
       label: Game client version and build
-      description: Copy the client version and build from /sfn status. Include the client name if you are not using WoW Forever.
-    validations:
-      required: true
+      description: Copy the client version and build from "/sfn status". Include the client name if you are not using WoW Forever.
   - type: textarea
     id: context
     attributes:
       label: Where and which units are affected?
       description: Include the zone, whether you are in the open world, a dungeon, a raid or PvP, and whether the unit is a player, minion or NPC. Mention group/combat state and the nameplate style if relevant.
-    validations:
-      required: true
   - type: textarea
     id: diagnostics
     attributes:
       label: Diagnostic report
-      description: While the problem is visible, target the affected unit if possible, run /sfn report and press Ctrl+C to copy the report here. If the report is unavailable, explain why.
+      description: While the problem is visible, target the affected unit if possible, run "/sfn report" and press Ctrl+C to copy the report here. If the report is unavailable, explain why.
       render: text
   - type: textarea
     id: lua-error
