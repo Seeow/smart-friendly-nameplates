@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Let name-only text use its natural width so long names are no longer truncated
+  to the hidden health bar. Preserve centering and restore native truncation
+  when health bars return.
+- Handle unreadable anchors for above-bar names as well as inside-bar names.
+  Clear readable explicit text widths while names stand alone, restore them
+  with full bars, and include width and truncation diagnostics in reports.
 - Add an optional title below name-only pets and player minions, with shared
   subtitle appearance settings. Read typed pet-owner tooltip lines as well as
   untyped titles. Disabled by default and saved per profile.

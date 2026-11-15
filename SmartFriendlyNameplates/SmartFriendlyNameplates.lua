@@ -48,6 +48,7 @@ local plates, forbidden = {}, {}
 local nameOnlyFrames = setmetatable({}, { __mode = "k" })
 local nameColors = setmetatable({}, { __mode = "k" })
 local nameLayouts = setmetatable({}, { __mode = "k" })
+local nameWidths = setmetatable({}, { __mode = "k" })
 local layoutHooks = setmetatable({}, { __mode = "k" })
 local centerStatus = setmetatable({}, { __mode = "k" })
 local InstallLayoutHook
@@ -194,21 +195,64 @@ local function SetNameLayout(name, layout)
     name:SetJustifyH(layout.justify)
 end
 
-local function InsideBarLayout(frame)
+local function NativeNameLayout(frame)
     local style = Read(function() return NamePlateSetupOptions.unitNameAnchorStyle end)
-    local inside = Read(function() return NamePlateConstants.NAME_ANCHOR_STYLES.InsideHealthBar end)
-    if style == nil or inside == nil or style ~= inside
+    local styles = Read(function() return NamePlateConstants.NAME_ANCHOR_STYLES end)
+    if style == nil or type(styles) ~= "table"
         or Read(C_CVar.GetCVar, "nameplateShowOnlyNameForFriendlyPlayerUnits") ~= "0" then return end
     local container = frame.HealthBarsContainer
     local text = container and container.healthBar and container.healthBar.Text
     if not container or not text then return end
-    -- GetPoint can be unavailable on nameplate regions. Large/Block have this
-    -- fixed native layout: reconstruct it from public style configuration,
-    -- without reading health values or touching Blizzard's Lua layout state.
-    return { justify = "LEFT", points = {
-        { "LEFT", container, "LEFT", 4, 0 },
-        { "RIGHT", text, "LEFT", -2, 0 },
+    -- GetPoint is unavailable on some client nameplates. Reconstruct supported
+    -- native layouts from public configuration, without calling layout helpers.
+    if style == styles.InsideHealthBar then
+        return { justify = "LEFT", points = {
+            { "LEFT", container, "LEFT", 4, 0 },
+            { "RIGHT", text, "LEFT", -2, 0 },
+        } }
+    end
+    local spacing = Read(function() return NamePlateSetupOptions.healthBarToNameAboveSpacing end)
+    if type(spacing) ~= "number" or spacing ~= spacing or math.abs(spacing) == math.huge then return end
+    if style == styles.CenteredAboveHealthBar then
+        return { justify = "CENTER", points = { { "BOTTOM", container, "TOP", 0, spacing } } }
+    end
+    if style ~= styles.AboveHealthBar then return end
+    -- Only reconstruct this shape when friendly frames do not reserve a
+    -- level-indicator span. Otherwise an unreadable layout cannot be restored
+    -- exactly and must remain under native control.
+    if Read(function() return NamePlateFriendlyFrameOptions.showLevel end) ~= false then return end
+    local justify = Read(function() return NamePlateSetupOptions.nameJustificationWhenAboveHealthBar end)
+    local healthInside = Read(function() return NamePlateSetupOptions.healthTextInsideBarWhenNameAboveHealthBar end)
+    if (justify ~= "LEFT" and justify ~= "CENTER" and justify ~= "RIGHT")
+        or type(healthInside) ~= "boolean" then return end
+    return { justify = justify, points = {
+        { "BOTTOMLEFT", container, "TOPLEFT", 0, spacing },
+        { "RIGHT", healthInside and container or text, healthInside and "RIGHT" or "LEFT", healthInside and 0 or -2, 0 },
     } }
+end
+
+local function ClearNameWidth(name)
+    if not Accessible(name) then return end
+    local width = Read(name.GetWidth, name, true)
+    if type(width) ~= "number" or width <= 0 or width ~= width or width == math.huge then return end
+    -- Preserve explicit width independently of anchor snapshots: native anchor
+    -- updates do not necessarily reset a width previously cleared by the addon.
+    nameWidths[name] = width
+    name:SetWidth(0)
+end
+
+local function RestoreNameWidth(name)
+    local before = nameWidths[name]
+    if before == nil then return end
+    if Accessible(name) then
+        local width = Read(name.GetWidth, name, true)
+        if type(width) ~= "number" then return end
+        if width == 0 then
+            local ok = pcall(name.SetWidth, name, before)
+            if not ok then Warn("layout", L.ERROR_RESTORE_VISUAL); return end
+        end
+    end
+    nameWidths[name] = nil
 end
 
 local function RestoreNameLayout(frame)
@@ -217,7 +261,7 @@ local function RestoreNameLayout(frame)
     if not saved then return end
     if Accessible(saved.name) then
         local current = saved.applied and NameLayout(saved.name)
-        local fallback = saved.applied and not current and InsideBarLayout(frame)
+        local fallback = saved.applied and not current and NativeNameLayout(frame)
         if saved.applied and not current and not fallback then return end
         -- A newer native layout takes precedence over our saved snapshot.
         if not saved.applied or (current and SameLayout(current, saved.applied)
@@ -246,18 +290,21 @@ local function CenterName(frame)
             if SamePoints(before.points, saved.applied.points) then before.points = saved.before.points end
             if before.justify == saved.applied.justify then before.justify = saved.before.justify end
         else
-            local inside = InsideBarLayout(frame)
-            if not inside then
+            local native = NativeNameLayout(frame)
+            if not native then
                 if not saved.fallback then centerStatus[frame] = "layout-unavailable"; return end
-            elseif saved.fallback and Read(frame.name.GetJustifyH, frame.name) == "CENTER" then
-                return
+            elseif saved.fallback and SameLayout(native, saved.before)
+                and Read(frame.name.GetJustifyH, frame.name) == "CENTER" then
+                local count = Read(frame.name.GetNumPoints, frame.name)
+                if count == #saved.applied.points or (count == nil and layoutHooks[frame]) then return end
+                before = native
             else
-                before = inside
+                before = native
             end
         end
         nameLayouts[frame] = nil -- The native layout has superseded our last write.
     end
-    before = before or InsideBarLayout(frame)
+    before = before or NativeNameLayout(frame)
     if not before then centerStatus[frame] = "layout-unavailable"; return end
     local container = frame.HealthBarsContainer
     local first
@@ -265,23 +312,24 @@ local function CenterName(frame)
         if point[2] == container then first = point; break end
     end
     if not first then centerStatus[frame] = "no-container-anchor"; return end
-    -- Preserve native vertical placement, but remove the asymmetric span that
-    -- reserves space for health text in Large/Block (and other bar styles).
+    -- Preserve native vertical placement. One horizontal anchor lets Blizzard's
+    -- non-wrapping FontString use its natural text width, without truncating it
+    -- to the hidden health bar or reserving space for health text.
     local vertical = first[1]:match("TOP") or first[1]:match("BOTTOM") or ""
     local relativeVertical = first[3]:match("TOP") or first[3]:match("BOTTOM") or ""
-    -- A single centered anchor already places the name correctly. Keep its
-    -- native width, while still watching for subsequent style changes.
-    if #before.points == 1 and before.justify == "CENTER" and first[4] == 0
+    -- A single centered anchor already allows natural text width. Keep it,
+    -- while still watching for subsequent style changes.
+    if not fallback and #before.points == 1 and before.justify == "CENTER" and first[4] == 0
         and first[1] == vertical and first[3] == relativeVertical then
         nameLayouts[frame] = { name = frame.name, before = before, applied = before }
         centerStatus[frame] = "native-centered"
         return
     end
     local centered = { justify = "CENTER", points = {
-        { vertical .. "LEFT", container, relativeVertical .. "LEFT", 4, first[5] },
-        { vertical .. "RIGHT", container, relativeVertical .. "RIGHT", -4, first[5] },
+        { vertical ~= "" and vertical or "CENTER", container,
+            relativeVertical ~= "" and relativeVertical or "CENTER", 0, first[5] },
     } }
-    if SameLayout(before, centered) then
+    if not fallback and SameLayout(before, centered) then
         nameLayouts[frame] = { name = frame.name, before = before, applied = before }
         centerStatus[frame] = "native-centered"
         return
@@ -445,6 +493,7 @@ end
 local function RestoreNameVisuals(frame)
     RestoreNameLayout(frame)
     if frame.name then
+        RestoreNameWidth(frame.name)
         RestoreNameColor(frame.name)
     end
     HideSubtitle(frame)
@@ -452,6 +501,9 @@ end
 
 local function UpdateNameVisuals(frame, unit)
     CenterName(frame)
+    if centerStatus[frame] ~= "layout-unavailable" and centerStatus[frame] ~= "no-container-anchor" then
+        ClearNameWidth(frame.name)
+    end
     ColorName(frame.name, unit)
     ShowSubtitle(frame, unit)
 end
@@ -1054,10 +1106,18 @@ end
 local function CenterDiagnostics(frame)
     if not Accessible(frame) or not Accessible(frame.name) then return "nameCenter=unavailable" end
     local justify = Read(frame.name.GetJustifyH, frame.name)
+    local width = Read(frame.name.GetWidth, frame.name)
+    local explicitWidth = Read(frame.name.GetWidth, frame.name, true)
+    local truncated = Flag(frame.name.IsTruncated, frame.name)
+    local style = Read(function() return NamePlateSetupOptions.unitNameAnchorStyle end)
     return "nameCenter=" .. (centerStatus[frame] or "inactive")
         .. "; justify=" .. (type(justify) == "string" and justify or "unavailable")
         .. "; layout=" .. (NameLayout(frame.name) and "readable" or "unavailable")
         .. "; layoutHook=" .. (layoutHooks[frame] and "installed" or "unavailable")
+        .. "; nameWidth=" .. (type(width) == "number" and tostring(width) or "unavailable")
+        .. "; explicitWidth=" .. (type(explicitWidth) == "number" and tostring(explicitWidth) or "unavailable")
+        .. "; truncated=" .. (truncated == nil and "unavailable" or tostring(truncated))
+        .. "; anchorStyle=" .. ((type(style) == "string" or type(style) == "number") and tostring(style) or "unavailable")
 end
 
 local function DebugTarget()

@@ -226,13 +226,18 @@ option change or world entry can also reapply the settings it requires.
 - Name colours are reapplied immediately after Blizzard updates names, including
   when hovering players or NPCs, so the periodic check does not cause a colour flash.
 - Name-only text stays centered with every nameplate style, including Large and
-  Block, while preserving its native vertical position. Full health bars restore
-  the native name anchors and alignment. Names use the game's nameplate width
-  and truncation.
-- If native anchors cannot be read, Large and Block use their fixed native style
-  layout for centering and restoration. Other unreadable layouts are left alone.
+  Block, while preserving its native vertical position. Names use their natural
+  text width instead of being truncated to the hidden health bar's width. Full
+  health bars restore the native name anchors, alignment, explicit width and
+  truncation.
+- If native anchors cannot be read, supported styles use their public native
+  configuration for centering and restoration, including names above health
+  bars. Unknown layouts or above-bar layouts that reserve space for a level
+  indicator are left alone when their anchors cannot be read.
   Target inspection and copyable reports include `nameCenter`, `justify`,
-  `layout` and `layoutHook` diagnostic fields to distinguish these cases.
+  `layout`, `layoutHook`, `nameWidth`, `explicitWidth`, `truncated` and
+  `anchorStyle` diagnostic fields to distinguish these cases. Restricted values
+  appear as `unavailable`.
 - Guild labels use available, non-secret guild text only. Missing information
   displays no guild line. Guild labels follow native name visibility and do not
   appear for minions or ordinary NPCs.

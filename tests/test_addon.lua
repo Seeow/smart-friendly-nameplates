@@ -40,7 +40,10 @@ local function Context(previous, options)
     env.SmartFriendlyNameplatesGlobalDB = previous and previous.env.SmartFriendlyNameplatesGlobalDB or nil
     env.SlashCmdList = {}
     env.NamePlateSetupOptions = {}
-    env.NamePlateConstants = { NAME_ANCHOR_STYLES = { InsideHealthBar = "inside" } }
+    env.NamePlateConstants = { NAME_ANCHOR_STYLES = {
+        InsideHealthBar = "inside", CenteredAboveHealthBar = "centered-above", AboveHealthBar = "above",
+    } }
+    env.NamePlateFriendlyFrameOptions = { showLevel = false }
     env.print = function(message) ctx.messages[#ctx.messages + 1] = message end
     env.issecretvalue = function(value) return value == SECRET end
     env.GetBuildInfo = function() return "1.60.1", "70888", "", 16001 end
@@ -346,7 +349,11 @@ local function Context(previous, options)
     function ctx:nativeLayout(frame, style)
         self.nameplateStyle = style or self.nameplateStyle or "Default"
         env.NamePlateSetupOptions.unitNameAnchorStyle = (self.nameplateStyle == "Large"
-            or self.nameplateStyle == "Block") and "inside" or "above"
+            or self.nameplateStyle == "Block") and "inside"
+            or self.nameplateStyle == "Default" and "centered-above" or "above"
+        env.NamePlateSetupOptions.healthBarToNameAboveSpacing = self.nameplateStyle == "CastFocus" and 3 or 2
+        env.NamePlateSetupOptions.nameJustificationWhenAboveHealthBar = "LEFT"
+        env.NamePlateSetupOptions.healthTextInsideBarWhenNameAboveHealthBar = true
         local name, container = frame.name, frame.HealthBarsContainer
         name:ClearAllPoints()
         if frame.showOnlyName or self.nameplateStyle == "Default" then
@@ -359,7 +366,7 @@ local function Context(previous, options)
         else
             name:SetJustifyH("LEFT")
             name:SetPoint("BOTTOMLEFT", container, "TOPLEFT", 0, 3)
-            name:SetPoint("BOTTOMRIGHT", container, "TOPRIGHT", 0, 3)
+            name:SetPoint("RIGHT", container, "RIGHT", 0, 0)
         end
         for _, callback in ipairs(self.layoutHooks[frame] or {}) do callback(frame) end
     end
@@ -401,6 +408,16 @@ local function Context(previous, options)
                 self.justification = justify
             end
             function frame.name:GetNumPoints() return #self.points end
+            function frame.name:GetWidth(explicit)
+                if explicit then return self.explicitWidth or 0 end
+                if self.explicitWidth and self.explicitWidth > 0 then return self.explicitWidth end
+                return #self.points == 1 and #self.text * 7 or 100
+            end
+            function frame.name:SetWidth(width)
+                self.geometryWrites = self.geometryWrites + 1
+                self.explicitWidth = width
+            end
+            function frame.name:IsTruncated() return self:GetWidth() < #self.text * 7 end
             function frame.name:GetPoint(index)
                 return (unpack or table.unpack)(self.points[index or 1])
             end
@@ -672,14 +689,13 @@ test("all nameplate styles center name-only text and restore their full-bar layo
         local justification = frame.name:GetJustifyH()
         ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
         equal(frame.name:GetJustifyH(), "CENTER", style)
-        if style ~= "Default" then
-            local points = frame.name.points
-            equal(points[1][2], frame.HealthBarsContainer)
-            equal(points[2][2], frame.HealthBarsContainer, "exclude the health-text anchor")
-            equal(points[1][4], -points[2][4], "equal left and right insets")
-            equal(points[1][5], original[1][5], "preserve vertical offset")
-            equal(points[2][5], original[1][5])
-        end
+        local points = frame.name.points
+        equal(#points, 1, style .. " names must not be constrained to the bar width")
+        equal(points[1][1], (style == "Large" or style == "Block") and "CENTER" or "BOTTOM")
+        equal(points[1][2], frame.HealthBarsContainer, "exclude the health-text anchor")
+        equal(points[1][3], (style == "Large" or style == "Block") and "CENTER" or "TOP")
+        equal(points[1][4], 0, "center horizontally")
+        equal(points[1][5], original[1][5], "preserve vertical offset")
         local writes = frame.name.geometryWrites
         for _ = 1, 3 do ctx:tick(); ctx:nativeNameUpdate(frame) end
         equal(frame.name.geometryWrites, writes, "unchanged names need no layout writes")
@@ -729,7 +745,7 @@ test("centering finds the container anchor regardless of GetPoint enumeration or
     ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
     equal(frame.name:GetJustifyH(), "CENTER")
     equal(frame.name.points[1][2], frame.HealthBarsContainer)
-    equal(frame.name.points[2][2], frame.HealthBarsContainer)
+    equal(#frame.name.points, 1, "natural text width despite reversed anchor enumeration")
     local writes = frame.name.geometryWrites
     ctx:tick()
     ctx:nativeNameUpdate(frame)
@@ -825,7 +841,7 @@ test("centering diagnostics identify applied and unavailable layouts without rea
     assert(ctx.messages[#ctx.messages]:find("nameCenter=centered-from-style", 1, true))
     ctx:nativeLayout(frame, "CastFocus")
     ctx:tick()
-    assert(ctx.addon.BuildReport():find("nameCenter=layout-unavailable; justify=LEFT", 1, true))
+    assert(ctx.addon.BuildReport():find("nameCenter=centered-from-style; justify=CENTER", 1, true))
 end)
 
 test("centering restores on removal and does not leak into a reused enemy frame", function()
@@ -902,6 +918,129 @@ test("a failed centering write restores the original anchors and leaves the bar 
     equal(#ctx.messages, 1)
 end)
 
+test("restricted name layouts remove explicit width and restore every supported style", function()
+    for _, style in ipairs({ "Default", "Large", "Block", "CastFocus" }) do
+        local ctx = Context()
+        ctx.addon.SetOption("includeNPCs", true)
+        local _, frame = ctx:unit("nameplate1", { player = false })
+        ctx:nativeLayout(frame, style)
+        local original = frame.name.points
+        frame.name.text = "Emissaire d'Alleria dont le nom depasse largement la largeur native"
+        frame.name:SetWidth(120)
+        equal(frame.name:IsTruncated(), true)
+        frame.name.GetPoint = function() error("restricted geometry, as on the live client") end
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(BarVisible(frame), 0)
+        equal(#frame.name.points, 1, style .. " must apply the fallback even if already centered")
+        equal(frame.name:GetWidth(true), 0)
+        equal(frame.name:IsTruncated(), false, "explicit width must also be cleared")
+        local writes = frame.name.geometryWrites
+        ctx:tick()
+        ctx:nativeNameUpdate(frame)
+        equal(frame.name.geometryWrites, writes, "unchanged restricted names need no writes")
+        ctx:command("off")
+        equal(frame.name:GetWidth(true), 120)
+        equal(frame.name:IsTruncated(), true)
+        equal(#frame.name.points, #original)
+        for index, point in ipairs(original) do
+            for field = 1, 5 do equal(frame.name.points[index][field], point[field]) end
+        end
+    end
+end)
+
+test("width snapshots survive native style changes and respect newer native widths", function()
+    local ctx = Context()
+    local _, frame = ctx:unit("nameplate1")
+    frame.name:SetWidth(120)
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:nativeLayout(frame, "Block")
+    ctx:command("off")
+    equal(frame.name:GetWidth(true), 120, "anchor hook must retain width restoration")
+    ctx:command("on")
+    frame.name:SetWidth(160)
+    ctx:nativeLayout(frame, "CastFocus")
+    equal(frame.name:GetWidth(true), 0)
+    ctx:command("off")
+    equal(frame.name:GetWidth(true), 160, "save the newest native explicit width")
+    ctx:command("on")
+    frame.name:SetWidth(180)
+    ctx:command("off")
+    equal(frame.name:GetWidth(true), 180, "do not overwrite a newer native width on restoration")
+end)
+
+test("width restoration covers target bars, removal and pooled enemy reuse", function()
+    local ctx = Context()
+    ctx.addon.SetOption("showTarget", true)
+    local _, frame = ctx:unit("nameplate1")
+    frame.name:SetWidth(120)
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx.target = "nameplate1"
+    ctx:emit("PLAYER_TARGET_CHANGED")
+    equal(frame.name:GetWidth(true), 120)
+    ctx.target = nil
+    ctx:emit("PLAYER_TARGET_CHANGED")
+    equal(frame.name:GetWidth(true), 0)
+    frame.unit = nil
+    ctx:emit("NAME_PLATE_UNIT_REMOVED", "nameplate1")
+    equal(frame.name:GetWidth(true), 120)
+    ctx:unit("nameplate2", { friendly = false }, frame)
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+    equal(frame.name:GetWidth(true), 120)
+end)
+
+test("unreadable centered native resets are repaired without a layout hook", function()
+    local ctx = Context()
+    ctx.failLayoutHook = true
+    local _, frame = ctx:unit("nameplate1")
+    ctx:nativeLayout(frame, "CastFocus")
+    ctx.env.NamePlateSetupOptions.nameJustificationWhenAboveHealthBar = "CENTER"
+    frame.name:SetJustifyH("CENTER")
+    frame.name.GetPoint = function() return SECRET end
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(#frame.name.points, 1)
+    ctx:nativeLayout(frame, "CastFocus")
+    ctx.env.NamePlateSetupOptions.nameJustificationWhenAboveHealthBar = "CENTER"
+    frame.name:SetJustifyH("CENTER")
+    ctx:tick()
+    equal(#frame.name.points, 1, "CENTER justification alone does not prove our anchor is still present")
+end)
+
+test("unknown or level-dependent restricted styles remain under native control", function()
+    for _, unknown in ipairs({ "unknown-style", "level-layout" }) do
+        local ctx = Context()
+        local _, frame = ctx:unit("nameplate1")
+        ctx:nativeLayout(frame, "CastFocus")
+        frame.name.GetPoint = function() error("restricted geometry") end
+        frame.name:SetWidth(120)
+        if unknown == "unknown-style" then
+            ctx.env.NamePlateSetupOptions.unitNameAnchorStyle = "unknown"
+        else
+            ctx.env.NamePlateFriendlyFrameOptions.showLevel = true
+        end
+        local writes = frame.name.geometryWrites
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(frame.name.geometryWrites, writes)
+        equal(frame.name:GetWidth(true), 120)
+        assert(ctx.addon.BuildReport():find("nameCenter=layout-unavailable", 1, true))
+    end
+end)
+
+test("name width diagnostics handle secret and unavailable values", function()
+    for _, unknown in ipairs({ SECRET, API_ERROR }) do
+        local ctx = Context()
+        local _, frame = ctx:unit("nameplate1")
+        frame.name.GetWidth = function()
+            if unknown == API_ERROR then error("restricted width") end
+            return unknown
+        end
+        frame.name.IsTruncated = frame.name.GetWidth
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        assert(ctx.addon.BuildReport():find("nameWidth=unavailable; explicitWidth=unavailable; truncated=unavailable", 1, true))
+        ctx:command("off")
+        equal(#ctx.messages, 1, "only the command acknowledgement")
+    end
+end)
+
 test("a centering failure during a native style change rolls back and pauses filtering", function()
     local ctx = Context()
     local _, frame = ctx:unit("nameplate1")
@@ -909,9 +1048,9 @@ test("a centering failure during a native style change rolls back and pauses fil
     local setPoint = frame.name.SetPoint
     local fail = true
     frame.name.SetPoint = function(self, point, relative, relativePoint, x, y)
-        if fail and relative == frame.HealthBarsContainer and x == -4 then
+        if fail and relative == frame.HealthBarsContainer and point == "CENTER" then
             fail = false
-            error("refused centered right anchor")
+            error("refused centered anchor")
         end
         return setPoint(self, point, relative, relativePoint, x, y)
     end
@@ -928,6 +1067,39 @@ test("a centering failure during a native style change rolls back and pauses fil
     ctx.addon.Repair()
     equal(BarVisible(frame), 0)
     equal(frame.name:GetJustifyH(), "CENTER")
+end)
+
+test("long name-only names keep natural width across name updates and target changes", function()
+    for _, properties in ipairs({ {}, { player = false, minion = true }, { player = false } }) do
+        local ctx = Context()
+        ctx.addon.SetOption("includeMinions", true)
+        ctx.addon.SetOption("includeNPCs", true)
+        ctx.addon.SetOption("showTarget", true)
+        ctx.addon.SetOption("npcShowTarget", true)
+        local _, frame = ctx:unit("nameplate1", properties)
+        ctx:nativeLayout(frame, "Large")
+        local function Unreadable() error("native name text must not be read or replaced") end
+        frame.name.GetText, frame.name.GetStringWidth, frame.name.SetText = Unreadable, Unreadable, Unreadable
+        frame.name.text = "Emissaire d'Alleria au nom beaucoup plus long que la barre"
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(#frame.name.points, 1, "long names must not be bounded by opposing anchors")
+        local writes = frame.name.geometryWrites
+        frame.name.text = "Un autre nom encore plus long apres une mise a jour native"
+        ctx:nativeNameUpdate(frame)
+        ctx:tick()
+        equal(frame.name.geometryWrites, writes, "natural width follows text without measuring it")
+        ctx.target = "nameplate1"
+        ctx:emit("PLAYER_TARGET_CHANGED")
+        equal(BarVisible(frame), 1)
+        equal(#frame.name.points, 2, "full bars regain native truncation")
+        equal(frame.name.points[2][2], frame.HealthBarsContainer.healthBar.Text)
+        ctx.target = nil
+        ctx:emit("PLAYER_TARGET_CHANGED")
+        equal(BarVisible(frame), 0)
+        equal(#frame.name.points, 1)
+        ctx:emit("NAME_PLATE_UNIT_REMOVED", "nameplate1")
+        equal(#frame.name.points, 2, "pooled frames regain native truncation")
+    end
 end)
 
 test("minion and NPC name-only modes also center Large and Block names", function()
@@ -1962,7 +2134,7 @@ test("pool reuse clears the old guild before another player or NPC", function()
     equal(label.text, "<New>")
 end)
 
-test("removed width setting stays removed and explicit name width is untouched", function()
+test("removed width setting stays removed and unreadable explicit width is untouched", function()
     local previous = { env = { SmartFriendlyNameplatesDB = {
         enabled = true, nameWidthPercent = 500, showGuild = true, showTarget = true,
     } } }
