@@ -2,7 +2,7 @@
 -- WoW Forever 1.60.1. No dependency; only ordinary, accessible nameplates.
 local ADDON_NAME, addon = ...
 local L = addon.L
-local VERSION = "0.2.1"
+local VERSION = "0.2.2"
 addon.VERSION = VERSION
 local DEFAULTS = {
     enabled = true,

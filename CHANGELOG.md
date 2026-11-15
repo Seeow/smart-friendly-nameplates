@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.2
 
 - Let name-only text use its natural width so long names are no longer truncated
   to the hidden health bar. Preserve centering and restore native truncation
