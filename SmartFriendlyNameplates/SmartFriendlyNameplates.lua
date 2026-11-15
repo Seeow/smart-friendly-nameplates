@@ -45,6 +45,10 @@ local db, characterDB, globalDB
 local plates, forbidden = {}, {}
 local nameOnlyFrames = setmetatable({}, { __mode = "k" })
 local nameColors = setmetatable({}, { __mode = "k" })
+local nameLayouts = setmetatable({}, { __mode = "k" })
+local layoutHooks = setmetatable({}, { __mode = "k" })
+local centerStatus = setmetatable({}, { __mode = "k" })
+local InstallLayoutHook
 local subtitleLabels = setmetatable({}, { __mode = "k" })
 local subtitleState = setmetatable({}, { __mode = "k" })
 local warnings = {}
@@ -139,6 +143,152 @@ local function RestoreNameColor(name)
         end
     end
     nameColors[name] = nil
+end
+
+local function NameLayout(name)
+    local count = Read(name.GetNumPoints, name)
+    local justify = Read(name.GetJustifyH, name)
+    if type(count) ~= "number" or count < 1
+        or (justify ~= "LEFT" and justify ~= "CENTER" and justify ~= "RIGHT") then return end
+    local layout = { justify = justify, points = {} }
+    for index = 1, count do
+        local ok, point, relative, relativePoint, x, y = pcall(name.GetPoint, name, index)
+        if not ok then return end
+        local values = { point, relative, relativePoint, x, y }
+        for field = 1, 5 do
+            if issecretvalue and issecretvalue(values[field]) then return end
+        end
+        if type(point) ~= "string" or not relative or type(relativePoint) ~= "string"
+            or type(x) ~= "number" or type(y) ~= "number" then return end
+        layout.points[index] = values
+    end
+    return layout
+end
+
+local function SamePoints(left, right)
+    if #left ~= #right then return false end
+    for _, point in ipairs(left) do
+        local match
+        for _, candidate in ipairs(right) do
+            if point[1] == candidate[1] then match = candidate; break end
+        end
+        if not match then return false end
+        for field = 2, 5 do
+            if point[field] ~= match[field] then return false end
+        end
+    end
+    return true
+end
+
+local function SameLayout(left, right)
+    return left.justify == right.justify and SamePoints(left.points, right.points)
+end
+
+local function SetNameLayout(name, layout)
+    name:ClearAllPoints()
+    for _, point in ipairs(layout.points) do
+        name:SetPoint(point[1], point[2], point[3], point[4], point[5])
+    end
+    name:SetJustifyH(layout.justify)
+end
+
+local function InsideBarLayout(frame)
+    local style = Read(function() return NamePlateSetupOptions.unitNameAnchorStyle end)
+    local inside = Read(function() return NamePlateConstants.NAME_ANCHOR_STYLES.InsideHealthBar end)
+    if style == nil or inside == nil or style ~= inside
+        or Read(C_CVar.GetCVar, "nameplateShowOnlyNameForFriendlyPlayerUnits") ~= "0" then return end
+    local container = frame.HealthBarsContainer
+    local text = container and container.healthBar and container.healthBar.Text
+    if not container or not text then return end
+    -- GetPoint can be unavailable on nameplate regions. Large/Block have this
+    -- fixed native layout: reconstruct it from public style configuration,
+    -- without reading health values or touching Blizzard's Lua layout state.
+    return { justify = "LEFT", points = {
+        { "LEFT", container, "LEFT", 4, 0 },
+        { "RIGHT", text, "LEFT", -2, 0 },
+    } }
+end
+
+local function RestoreNameLayout(frame)
+    centerStatus[frame] = nil
+    local saved = nameLayouts[frame]
+    if not saved then return end
+    if Accessible(saved.name) then
+        local current = saved.applied and NameLayout(saved.name)
+        local fallback = saved.applied and not current and InsideBarLayout(frame)
+        if saved.applied and not current and not fallback then return end
+        -- A newer native layout takes precedence over our saved snapshot.
+        if not saved.applied or (current and SameLayout(current, saved.applied)
+            and not SameLayout(current, saved.before))
+            or fallback then
+            local ok = pcall(SetNameLayout, saved.name, fallback or saved.before)
+            if not ok then Warn("layout", L.ERROR_RESTORE_VISUAL); return end
+        end
+    end
+    nameLayouts[frame] = nil
+end
+
+local function CenterName(frame)
+    if not Accessible(frame.name) then return end
+    -- A post-hook improves responsiveness, but failure to hook must not disable
+    -- centering. Polling also detects native changes outside UpdateAnchors.
+    InstallLayoutHook(frame)
+    local before = NameLayout(frame.name)
+    local fallback = not before
+    local saved = nameLayouts[frame]
+    if saved then
+        if before and SameLayout(before, saved.applied) then return end
+        if before then
+            -- FontObject updates may reset only justification. Do not save our
+            -- own centered anchors as the native full-bar layout in that case.
+            if SamePoints(before.points, saved.applied.points) then before.points = saved.before.points end
+            if before.justify == saved.applied.justify then before.justify = saved.before.justify end
+        else
+            local inside = InsideBarLayout(frame)
+            if not inside then
+                if not saved.fallback then centerStatus[frame] = "layout-unavailable"; return end
+            elseif saved.fallback and Read(frame.name.GetJustifyH, frame.name) == "CENTER" then
+                return
+            else
+                before = inside
+            end
+        end
+        nameLayouts[frame] = nil -- The native layout has superseded our last write.
+    end
+    before = before or InsideBarLayout(frame)
+    if not before then centerStatus[frame] = "layout-unavailable"; return end
+    local container = frame.HealthBarsContainer
+    local first
+    for _, point in ipairs(before.points) do
+        if point[2] == container then first = point; break end
+    end
+    if not first then centerStatus[frame] = "no-container-anchor"; return end
+    -- Preserve native vertical placement, but remove the asymmetric span that
+    -- reserves space for health text in Large/Block (and other bar styles).
+    local vertical = first[1]:match("TOP") or first[1]:match("BOTTOM") or ""
+    local relativeVertical = first[3]:match("TOP") or first[3]:match("BOTTOM") or ""
+    -- A single centered anchor already places the name correctly. Keep its
+    -- native width, while still watching for subsequent style changes.
+    if #before.points == 1 and before.justify == "CENTER" and first[4] == 0
+        and first[1] == vertical and first[3] == relativeVertical then
+        nameLayouts[frame] = { name = frame.name, before = before, applied = before }
+        centerStatus[frame] = "native-centered"
+        return
+    end
+    local centered = { justify = "CENTER", points = {
+        { vertical .. "LEFT", container, relativeVertical .. "LEFT", 4, first[5] },
+        { vertical .. "RIGHT", container, relativeVertical .. "RIGHT", -4, first[5] },
+    } }
+    if SameLayout(before, centered) then
+        nameLayouts[frame] = { name = frame.name, before = before, applied = before }
+        centerStatus[frame] = "native-centered"
+        return
+    end
+    saved = { name = frame.name, before = before, fallback = fallback }
+    nameLayouts[frame] = saved
+    SetNameLayout(frame.name, centered)
+    saved.applied = centered
+    centerStatus[frame] = fallback and "centered-from-style" or "centered"
 end
 
 -- NPCs must be positively distinguished from player minions. Unknown identity
@@ -274,6 +424,7 @@ local function ShowSubtitle(frame, unit)
 end
 
 local function RestoreNameVisuals(frame)
+    RestoreNameLayout(frame)
     if frame.name then
         RestoreNameColor(frame.name)
     end
@@ -281,6 +432,7 @@ local function RestoreNameVisuals(frame)
 end
 
 local function UpdateNameVisuals(frame, unit)
+    CenterName(frame)
     ColorName(frame.name, unit)
     ShowSubtitle(frame, unit)
 end
@@ -302,6 +454,15 @@ local function RestoreFrame(frame)
         end
     end
     nameOnlyFrames[frame] = nil
+end
+
+local function PauseFrame(frame, err)
+    RestoreFrame(frame)
+    local record = plates[frame.unit]
+    if record and record.frame == frame then record.failed = true end
+    local detail = (issecretvalue and issecretvalue(err)) and L.PROTECTED_ERROR or tostring(err)
+    Warn("nameOnly", string.format(L.FILTER_PAUSED, detail))
+    if addon.RefreshOptions then addon.RefreshOptions() end
 end
 
 local function ShowNameOnly(frame, unit)
@@ -440,6 +601,32 @@ local function ShouldShowNameOnly(unit)
     return true, "name-only"
 end
 
+InstallLayoutHook = function(frame)
+    if layoutHooks[frame] ~= nil then return layoutHooks[frame] end
+    if type(hooksecurefunc) ~= "function" or type(frame.UpdateAnchors) ~= "function" then return false end
+    -- Hook the actual pooled frame, not the mixin whose methods were copied at
+    -- creation. Never call Blizzard's Lua layout/health helpers ourselves.
+    local ok = pcall(hooksecurefunc, frame, "UpdateAnchors", function(updated)
+        -- Blizzard just supplied fresh geometry, so an older style snapshot
+        -- must never be restored over it, even if this frame has been reused.
+        nameLayouts[updated] = nil
+        centerStatus[updated] = nil
+        if not db or not db.enabled or not nameOnlyFrames[updated] then return end
+        if not Accessible(updated) or not updated.unit or not updated.name then return end
+        local synced, err = pcall(function()
+            groupSnapshot = nil
+            if ShouldShowNameOnly(updated.unit) then
+                UpdateNameVisuals(updated, updated.unit)
+            else
+                RestoreNameVisuals(updated)
+            end
+        end)
+        if not synced then PauseFrame(updated, err) end
+    end)
+    layoutHooks[frame] = ok
+    return ok
+end
+
 local function InstallNameHook()
     if nameHookInstalled then return end
     if type(hooksecurefunc) ~= "function" or type(CompactUnitFrame_UpdateName) ~= "function" then return end
@@ -449,7 +636,7 @@ local function InstallNameHook()
     local ok = pcall(hooksecurefunc, "CompactUnitFrame_UpdateName", function(frame)
         if not db or not db.enabled or not nameOnlyFrames[frame] then return end
         if not Accessible(frame) or not frame.unit or not frame.name then return end
-        local recoloured = pcall(function()
+        local recoloured, err = pcall(function()
             groupSnapshot = nil
             -- Re-check the live unit: pooled frames may already represent a
             -- different player/NPC before our removal event is delivered.
@@ -460,7 +647,7 @@ local function InstallNameHook()
             end
         end)
         if not recoloured then
-            Warn("colorHook", L.ERROR_COLOR_SYNC)
+            PauseFrame(frame, err)
         end
     end)
     nameHookInstalled = ok
@@ -482,11 +669,7 @@ local function UpdatePlate(unit)
     if ShouldShowNameOnly(unit) then
         local ok, err = pcall(ShowNameOnly, frame, unit)
         if not ok then
-            RestoreFrame(frame)
-            record.failed = true -- Do not retry a failing operation every 0.2 s.
-            local detail = (issecretvalue and issecretvalue(err)) and L.PROTECTED_ERROR or tostring(err)
-            Warn("nameOnly", string.format(L.FILTER_PAUSED, detail))
-            if addon.RefreshOptions then addon.RefreshOptions() end
+            PauseFrame(frame, err) -- Do not retry a failing operation every 0.2 s.
         end
     else
         RestoreFrame(frame)
@@ -848,6 +1031,15 @@ local function DescribeFlag(fn, ...)
     return value and L.VALUE_YES or L.VALUE_NO
 end
 
+local function CenterDiagnostics(frame)
+    if not Accessible(frame) or not Accessible(frame.name) then return "nameCenter=unavailable" end
+    local justify = Read(frame.name.GetJustifyH, frame.name)
+    return "nameCenter=" .. (centerStatus[frame] or "inactive")
+        .. "; justify=" .. (type(justify) == "string" and justify or "unavailable")
+        .. "; layout=" .. (NameLayout(frame.name) and "readable" or "unavailable")
+        .. "; layoutHook=" .. (layoutHooks[frame] and "installed" or "unavailable")
+end
+
 local function DebugTarget()
     if Flag(UnitExists, "target") ~= true then
         Say(L.TARGET_PROMPT)
@@ -861,6 +1053,12 @@ local function DebugTarget()
     Say(string.format(L.TARGET_DISPLAY,
         ShouldShowNameOnly("target") and L.VALUE_NAME_ONLY or L.VALUE_NORMAL_DISPLAY))
     Say(string.format(L.STATUS_REASON, ReasonText(ExplainUnit("target"))))
+    for token, record in pairs(plates) do
+        if Flag(UnitIsUnit, token, "target") == true then
+            Say(CenterDiagnostics(record.frame))
+            break
+        end
+    end
 end
 
 addon.PrintStatus = function() Status() end
@@ -880,6 +1078,7 @@ function addon.BuildReport()
         local record = plates[unit]
         local actual = record and record.frame and nameOnlyFrames[record.frame] and L.VALUE_NAME_ONLY or L.VALUE_NORMAL_DISPLAY
         lines[#lines + 1] = unit .. ": " .. actual .. "; " .. ReasonText(ExplainUnit(unit))
+        if record then lines[#lines + 1] = "  " .. CenterDiagnostics(record.frame) end
     end
     return table.concat(lines, "\n")
 end

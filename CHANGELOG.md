@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Center name-only text with every Blizzard nameplate style, including Large
+  and Block. Preserve vertical placement and restore the current style's native
+  layout when health bars return, including after changing styles.
+- Handle unavailable native anchor reads and layout hooks when centering Large
+  and Block names. Repair native layout resets and include centering diagnostics
+  in target inspection and copyable reports.
 - Exclude NPC level text from titles even when the tooltip returns it as an
   untyped line, using the game's localized level label.
 

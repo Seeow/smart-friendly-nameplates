@@ -214,7 +214,14 @@ option change or world entry can also reapply the settings it requires.
   leaves the full bar visible.
 - Name colours are reapplied immediately after Blizzard updates names, including
   when hovering players or NPCs, so the periodic check does not cause a colour flash.
-- Name width and truncation remain under the game's control.
+- Name-only text stays centered with every nameplate style, including Large and
+  Block, while preserving its native vertical position. Full health bars restore
+  the native name anchors and alignment. Names use the game's nameplate width
+  and truncation.
+- If native anchors cannot be read, Large and Block use their fixed native style
+  layout for centering and restoration. Other unreadable layouts are left alone.
+  Target inspection and copyable reports include `nameCenter`, `justify`,
+  `layout` and `layoutHook` diagnostic fields to distinguish these cases.
 - Guild labels use available, non-secret guild text only. Missing information
   displays no guild line. Guild labels follow native name visibility and do not
   appear for minions or ordinary NPCs.
@@ -238,10 +245,10 @@ option change or world entry can also reapply the settings it requires.
   click area. Native name-display, distance and simplified-style rules apply.
 - Avoid other addons that also change friendly nameplate visibility or opacity.
 
-Only visual C API methods are used to filter plates and colour text. A secure
-post-hook keeps colours in sync after native name updates. The addon does not
-read health values, call/replace Blizzard's name updater, or modify its Lua
-health/layout state.
+Only visual C API methods are used to filter plates, center names and colour
+text. Secure post-hooks keep colours and centering in sync after native name
+and layout updates. The addon does not read health values, call/replace Blizzard's
+name or layout updaters, or modify its Lua health/layout state.
 Automated checks simulate the event loop; actual client restrictions and visual
 behaviour still require in-game testing.
 
@@ -330,8 +337,10 @@ verified in game, check:
    is reported without a repeated fight over the setting, then try **Retry setup**.
    Repeat setup changes in combat and verify that only game-setting writes wait.
 4. Guild and NPC-title appearance at different interface scales, through bar
-   visibility changes and nameplate reuse. Check the report dialog with a long
-   report and a narrow or scaled interface.
+   visibility changes and nameplate reuse. Switch between all nameplate styles,
+   including Large and Block: names alone must stay centered; full bars must
+   regain the current style's native alignment. Check the report dialog with a
+   long report and a narrow or scaled interface.
 5. Town crowds, pets/guardians/totems, party/raid changes and protected nameplates
    in instances. Protected plates must remain under the game's control.
 
