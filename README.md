@@ -100,6 +100,9 @@ it. The general Restore defaults button is at the top of the panel.
   eligible friendly player or minion. Off by default.
 - **Apply filtering to friendly player minions**: extend the same rules to pets,
   guardians and totems, without changing ordinary NPCs.
+- **Show title below name-only minions**: display the minion's localized title
+  (such as its owner's pet) beneath its visible name, when available. Requires
+  minion filtering and hidden health bars. Off by default.
 - **Use class colours for names without health bars**: apply class colours only
   to name-only players while filtering is enabled.
 - **Show guild below name-only players**: display the player's guild beneath
@@ -120,10 +123,12 @@ it. The general Restore defaults button is at the top of the panel.
   whether to wrap the text in `<…>` (on by default). Click the colour swatch
   to preview changes live; Cancel restores the previous colour. The adjacent
   **Default** button resets only the colour (RGB 0.7/0.85/0.7). These
-  controls affect the addon's guild and NPC-title subtitles, not native names.
+  controls affect the addon's guild, minion-title and NPC-title subtitles, not
+  native names.
 - **Restore defaults**: enable filtering, group/combat conditions and class
   colours; disable minions, target/focus/mouseover rules, guild and NPC support.
-  NPC preferences default to names only with titles, with the NPC-target rule off.
+  Minion titles default to off. NPC preferences default to names only with titles,
+  with the NPC-target rule off.
   Reset subtitle appearance too. Only the active profile changes.
 - **Print status** and **Inspect target**: print diagnostics and the reason for
   a unit's display, including protected or paused nameplates.
@@ -231,12 +236,14 @@ option change or world entry can also reapply the settings it requires.
 - Guild labels use available, non-secret guild text only. Missing information
   displays no guild line. Guild labels follow native name visibility and do not
   appear for minions or ordinary NPCs.
-- NPC titles use the expected title line in `C_TooltipInfo.GetUnit`, accounting
-  for colourblind mode. There is no dedicated title API; this position-based
-  extraction must be verified in game. Missing or protected text, typed
-  level/type/quest lines and text containing the game's localized level label
+- Minion titles prefer the typed `UnitOwner` line in `C_TooltipInfo.GetUnit`,
+  regardless of its position. NPC titles and untyped minion titles use the
+  expected title slot, accounting for colourblind mode. This extraction must be
+  verified in game. Missing or protected text, typed level/type/quest lines and
+  untyped text containing the game's localized level label
   (such as "Level" or "Niveau") produce no subtitle. A title is cached until the
-  nameplate is removed or its name changes; missing data is retried every 2 s.
+  nameplate is removed or its name changes; minion titles are also refreshed on
+  pet updates. Missing data is retried every 2 s.
 - Unknown or secret group/combat or selected-unit comparison information leaves
   the full nameplate visible when an enabled rule requires that information.
 - Only enabled conditions are checked. A disabled condition's restricted data
@@ -342,8 +349,8 @@ verified in game, check:
 3. A game setting changed manually while the addon is active. Confirm a conflict
    is reported without a repeated fight over the setting, then try **Retry setup**.
    Repeat setup changes in combat and verify that only game-setting writes wait.
-4. Guild and NPC-title appearance at different interface scales, through bar
-   visibility changes and nameplate reuse. Switch between all nameplate styles,
+4. Guild, minion-title and NPC-title appearance at different interface scales,
+   through bar visibility changes and nameplate reuse. Switch between all nameplate styles,
    including Large and Block: names alone must stay centered; full bars must
    regain the current style's native alignment. Check the report dialog with a
    long report and a narrow or scaled interface.

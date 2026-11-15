@@ -232,7 +232,7 @@ local function Context(previous, options)
         ctx.guildReads = ctx.guildReads + 1
         return ReadUnit(unit, "guild")
     end
-    env.Enum = { TooltipDataLineType = { None = 0, UnitName = 2, UnitLevel = 47, UnitType = 48 } }
+    env.Enum = { TooltipDataLineType = { None = 0, UnitName = 2, UnitOwner = 16, UnitLevel = 47, UnitType = 48 } }
     env.C_TooltipInfo = { GetUnit = function(unit)
         ctx.tooltipReads = ctx.tooltipReads + 1
         return ReadUnit(unit, "tooltip")
@@ -2217,6 +2217,212 @@ local function NPCTooltip(title, colorblind)
     return { lines = lines }
 end
 
+local function MinionTooltip(title, colorblind)
+    local tooltip = NPCTooltip(title, colorblind)
+    if title then tooltip.lines[colorblind and 3 or 2].type = 16 end
+    return tooltip
+end
+
+test("minion titles read typed owner lines regardless of tooltip position or colourblind setting", function()
+    for _, mode in ipairs({ "0", "1", "unavailable" }) do
+        local ctx = Context()
+        ctx.cvars.colorblindmode = mode
+        ctx.addon.SetOption("includeMinions", true)
+        ctx.addon.SetOption("showMinionTitle", true)
+        local _, frame = ctx:unit("nameplate1", { player = false, minion = true, tooltip = { lines = {
+            { type = 2, leftText = "Guardian" },
+            { type = 0, leftText = "Friendly" },
+            { type = 47, leftText = "Level 60" },
+            { type = 48, leftText = "Demon" },
+            { type = 16, leftText = "Serviteur de Joueur" },
+        } } })
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        local label = frame.extraRegions[1]
+        assert(label, "typed owner text must produce a minion subtitle")
+        equal(label.text, "<Serviteur de Joueur>")
+        equal(label.shown, true)
+        equal(#ctx.messages, 0)
+    end
+end)
+
+test("typed minion ownership titles can contain the localized level word", function()
+    local ctx = Context()
+    ctx.env.LEVEL = "Level"
+    ctx.addon.SetOption("includeMinions", true)
+    ctx.addon.SetOption("showMinionTitle", true)
+    local _, frame = ctx:unit("nameplate1", { player = false, minion = true,
+        tooltip = MinionTooltip("Levelup's Pet") })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(frame.extraRegions[1].text, "<Levelup's Pet>")
+end)
+
+test("minion titles retain untyped title support when no owner line exists", function()
+    for _, colorblind in ipairs({ false, true }) do
+        local ctx = Context()
+        ctx.cvars.colorblindmode = colorblind and "1" or "0"
+        ctx.addon.SetOption("includeMinions", true)
+        ctx.addon.SetOption("showMinionTitle", true)
+        local _, frame = ctx:unit("nameplate1", { player = false, minion = true,
+            tooltip = NPCTooltip("Guardian of the grove", colorblind) })
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(frame.extraRegions[1].text, "<Guardian of the grove>")
+    end
+end)
+
+test("minion titles toggle live only beneath visible names without health bars", function()
+    for _, colorblind in ipairs({ false, true }) do
+        local ctx = Context()
+        ctx.cvars.colorblindmode = colorblind and "1" or "0"
+        ctx.addon.SetOption("includeMinions", true)
+        ctx.addon.SetOption("showGuild", true)
+        local unit, frame = ctx:unit("nameplate1", { player = false, minion = true,
+            guild = "Not a player guild", tooltip = MinionTooltip("Familier de Joueur", colorblind) })
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(BarVisible(frame), 0)
+        equal(ctx.tooltipReads, 0, "titles are off by default")
+        equal(#frame.extraRegions, 0)
+        ctx:click(ctx.addon.L.UI_MINION_TITLE)
+        local label = frame.extraRegions[1]
+        equal(label.text, "<Familier de Joueur>")
+        equal(label.shown, true)
+        frame.name.shown = false
+        ctx:nativeNameUpdate(frame)
+        equal(label.shown, false)
+        frame.name.shown = true
+        ctx:nativeNameUpdate(frame)
+        equal(label.shown, true)
+        unit.combat = true
+        ctx:emit("UNIT_FLAGS", "nameplate1")
+        equal(BarVisible(frame), 1)
+        equal(label.shown, false)
+        unit.combat = false
+        ctx:emit("UNIT_FLAGS", "nameplate1")
+        equal(label.shown, true)
+        ctx.addon.SetOption("subtitleSize", 18)
+        ctx.addon.SetOption("subtitleOffset", 7)
+        ctx.addon.SetOption("subtitleBrackets", false)
+        equal(label.text, "Familier de Joueur")
+        equal(label.fontSize, 18)
+        equal(label.point[5], -7)
+        ctx.addon.SetOption("includeMinions", false)
+        equal(label.shown, false)
+        ctx.addon.SetOption("includeMinions", true)
+        equal(label.shown, true)
+        ctx:click(ctx.addon.L.UI_MINION_TITLE)
+        equal(label.shown, false)
+        local reads = ctx.tooltipReads
+        ctx:tick()
+        equal(ctx.tooltipReads, reads, "disabled titles do not scan tooltips")
+    end
+end)
+
+test("minion titles do not enable NPC titles or read excluded and restricted units", function()
+    for _, properties in ipairs({
+        { player = true }, { player = false, minion = false },
+        { player = false, minion = true, friendly = false },
+        { player = SECRET, minion = true }, { player = false, minion = SECRET },
+        { player = false, minion = API_ERROR },
+    }) do
+        local ctx = Context()
+        ctx.addon.SetOption("includeMinions", true)
+        ctx.addon.SetOption("showMinionTitle", true)
+        ctx.addon.SetOption("includeNPCs", true)
+        ctx.addon.SetOption("showNPCTitle", false)
+        properties.tooltip = MinionTooltip("Excluded title")
+        local _, frame = ctx:unit("nameplate1", properties)
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(#frame.extraRegions, 0)
+        equal(ctx.tooltipReads, 0)
+        equal(#ctx.messages, 0)
+    end
+end)
+
+test("minion titles reject unavailable or non-title text and throttle retries", function()
+    for _, tooltip in ipairs({ false, SECRET, API_ERROR, {}, NPCTooltip(nil),
+        NPCTooltip(SECRET), NPCTooltip(""), NPCTooltip("Level 60"),
+        MinionTooltip(SECRET), MinionTooltip(""),
+        { lines = { { type = 2 }, { type = 0, leftText = "Friendly" },
+            { type = 16, leftText = SECRET } } },
+        { lines = { { type = 2 }, { type = SECRET, leftText = "Unknown type" } } },
+        { lines = { { type = 2 }, { type = 48, leftText = "Beast" } } },
+    }) do
+        local ctx = Context()
+        ctx.env.LEVEL = "Level"
+        ctx.addon.SetOption("includeMinions", true)
+        ctx.addon.SetOption("showMinionTitle", true)
+        local unit, frame = ctx:unit("nameplate1", { player = false, minion = true, tooltip = tooltip })
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(BarVisible(frame), 0)
+        equal(#frame.extraRegions, 0)
+        equal(ctx.tooltipReads, 1)
+        unit.tooltip = MinionTooltip("Owner's Guardian")
+        for _ = 1, 5 do ctx:tick() end
+        equal(ctx.tooltipReads, 1)
+        for _ = 1, 5 do ctx:tick() end
+        equal(ctx.tooltipReads, 2)
+        equal(frame.extraRegions[1].text, "<Owner's Guardian>")
+        equal(#ctx.messages, 0)
+    end
+end)
+
+test("minion title cache refreshes for name, pet and colourblind changes and pooled frames", function()
+    local ctx = Context()
+    ctx.addon.SetOption("includeMinions", true)
+    ctx.addon.SetOption("showMinionTitle", true)
+    local unit, frame = ctx:unit("nameplate1", { player = false, minion = true,
+        tooltip = MinionTooltip("First owner's pet") })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    local label = frame.extraRegions[1]
+    for _ = 1, 12 do ctx:emit("UNIT_FLAGS", "nameplate1"); ctx:tick() end
+    equal(ctx.tooltipReads, 1, "unchanged titles remain cached")
+    unit.tooltip = MinionTooltip("Second owner's pet")
+    ctx:emit("UNIT_PET", "party1")
+    equal(label.text, "<Second owner's pet>")
+    unit.tooltip = MinionTooltip("Renamed pet")
+    ctx:emit("UNIT_NAME_UPDATE", "nameplate1")
+    equal(label.text, "<Renamed pet>")
+    ctx.cvars.colorblindmode = "1"
+    unit.tooltip = MinionTooltip("Colourblind pet", true)
+    ctx:emit("CVAR_UPDATE", "colorblindmode", "1")
+    equal(label.text, "<Colourblind pet>")
+    ctx:emit("NAME_PLATE_UNIT_REMOVED", "nameplate1")
+    equal(label.shown, false)
+    ctx:unit("nameplate1", { player = false, minion = true,
+        tooltip = MinionTooltip("Reused frame's pet", true) }, frame)
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(label.text, "<Reused frame's pet>")
+    ctx:emit("NAME_PLATE_UNIT_REMOVED", "nameplate1")
+    ctx:unit("nameplate1", { guild = "Player guild" }, frame)
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(label.shown, false, "recycled minion subtitle does not leak onto players")
+end)
+
+test("minion title preference follows UI dependencies, profiles, reload and defaults", function()
+    local ctx = Context(nil, { locale = "frFR" })
+    local L = ctx.addon.L
+    local check = ctx:widget(L.UI_MINION_TITLE)
+    local brackets = ctx:widget(L.UI_SUBTITLE_BRACKETS)
+    equal(check:GetChecked(), false)
+    equal(check.alpha, 0.5)
+    ctx:click(L.UI_MINION_TITLE)
+    equal(check:GetChecked(), true, "can configure the preference before enabling minions")
+    equal(brackets.alpha, 0.5)
+    ctx:click(L.UI_MINIONS)
+    equal(check.alpha, 1)
+    equal(brackets.alpha, 1, "minion titles alone activate subtitle appearance")
+    assert(ctx.addon.BuildReport():find(string.format(L.STATUS_MINION_TITLE, L.VALUE_YES), 1, true))
+    ctx.addon.CopyProfile("global")
+    ctx.addon.SetProfile("global")
+    ctx.addon.SetOption("showMinionTitle", false)
+    ctx.addon.SetProfile("character")
+    equal(ctx.addon.GetOptions().showMinionTitle, true)
+    local reload = Context(ctx, { locale = "frFR" })
+    equal(reload.addon.GetOptions().showMinionTitle, true)
+    reload.addon.RestoreDefaults()
+    equal(reload.addon.GetOptions().showMinionTitle, false)
+    equal(reload.addon.GetOptions().includeMinions, false)
+end)
+
 test("NPC modes are independent of player rules, minions and class colours", function()
     local ctx = Context()
     ctx.addon.SetOption("includeNPCs", true)
@@ -2306,7 +2512,7 @@ end)
 test("NPC title lookup rejects missing, secret, malformed and non-title lines", function()
     local samples = { false, SECRET, API_ERROR, {}, { lines = SECRET },
         { lines = { SECRET } }, { lines = { { type = SECRET } } },
-        NPCTooltip(nil), NPCTooltip(SECRET), NPCTooltip(""),
+        NPCTooltip(nil), NPCTooltip(SECRET), NPCTooltip(""), MinionTooltip("Owner's pet"),
         { lines = { { type = 2 }, { type = SECRET, leftText = "No" } } },
         { lines = { { type = 2 }, { type = 48, leftText = "Humanoid" } } },
         { lines = { { type = 2 }, { type = 0, leftText = SECRET } } },

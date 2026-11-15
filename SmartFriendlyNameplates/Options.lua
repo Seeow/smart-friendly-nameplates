@@ -418,6 +418,9 @@ function addon.RegisterOptions()
     Section(L.UI_SECTION_MINIONS)
     Checkbox("includeMinions", L.UI_MINIONS,
         L.UI_MINIONS_DESC)
+    local function Minions(options) return options.includeMinions end
+    Checkbox("showMinionTitle", L.UI_MINION_TITLE,
+        L.UI_MINION_TITLE_DESC, nil, Minions, L.UI_REQUIRES_MINIONS)
     Section(L.UI_SECTION_NPCS)
     local function NPCs(options) return options.includeNPCs end
     local function NPCNames(options) return options.includeNPCs and not options.showNPCBars end
@@ -437,7 +440,8 @@ function addon.RegisterOptions()
     Checkbox("showGuild", L.UI_GUILD, L.UI_GUILD_DESC)
     Text("GameFontHighlightSmall", L.UI_SUBTITLES_HELP)
     local function Subtitles(options)
-        return options.showGuild or (NPCNames(options) and options.showNPCTitle)
+        return options.showGuild or (Minions(options) and options.showMinionTitle)
+            or (NPCNames(options) and options.showNPCTitle)
     end
     Checkbox("subtitleBrackets", L.UI_SUBTITLE_BRACKETS, L.UI_SUBTITLE_BRACKETS_DESC,
         nil, Subtitles, L.UI_REQUIRES_SUBTITLES)

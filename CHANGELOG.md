@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add an optional title below name-only pets and player minions, with shared
+  subtitle appearance settings. Read typed pet-owner tooltip lines as well as
+  untyped titles. Disabled by default and saved per profile.
 - Disable all native nameplate simplification categories while filtering is
   enabled so names-only units keep their names. Restore the previous selection
   on disable, preserve it across reloads and defer protected changes in combat.

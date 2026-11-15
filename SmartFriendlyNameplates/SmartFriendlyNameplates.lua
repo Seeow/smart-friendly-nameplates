@@ -11,6 +11,7 @@ local DEFAULTS = {
     showCombat = true,
     showTarget = false,
     includeMinions = false,
+    showMinionTitle = false,
     showGuild = false,
     includeNPCs = false,
     showNPCBars = false,
@@ -340,10 +341,10 @@ local function Field(object, key)
     return Read(function() return object[key] end)
 end
 
-local function NPCTitle(frame, unit)
+local function UnitTitle(frame, unit, minion)
     local record = plates[unit]
     if not record or record.frame ~= frame then return end
-    if record.npcTitle then return record.npcTitle end
+    if record.unitTitle then return record.unitTitle end
     if record.nextTitleRead and updateTime < record.nextTitleRead then return end
     -- Retry unavailable data without scanning every name update or polling tick.
     record.nextTitleRead = updateTime + 2
@@ -356,19 +357,33 @@ local function NPCTitle(frame, unit)
     if type(lines) ~= "table" then return end
     local first = Field(lines, 1)
     if type(first) ~= "table" or Field(first, "type") ~= types.UnitName then return end
-    local colorblind = Read(C_CVar.GetCVar, "colorblindmode")
-    if colorblind ~= "0" and colorblind ~= "1" then return end
-    -- In colourblind mode the native tooltip inserts a reaction line after
-    -- the name. Titles are untyped; reject explicitly typed non-title lines.
-    local line = Field(lines, colorblind == "1" and 3 or 2)
-    if type(line) ~= "table" or Field(line, "type") ~= types.None then return end
+    local line, ownerTitle
+    if minion and types.UnitOwner then
+        -- Pet/guardian ownership titles have their own line type. Their
+        -- position does not depend on the NPC title or colourblind layout.
+        for index = 2, #lines do
+            local candidate = Field(lines, index)
+            if type(candidate) == "table" and Field(candidate, "type") == types.UnitOwner then
+                line, ownerTitle = candidate, true
+                break
+            end
+        end
+    end
+    if not ownerTitle then
+        local colorblind = Read(C_CVar.GetCVar, "colorblindmode")
+        if colorblind ~= "0" and colorblind ~= "1" then return end
+        -- Untyped titles use the expected slot, after the reaction line in
+        -- colourblind mode. Never mistake level/type/quest lines for titles.
+        line = Field(lines, colorblind == "1" and 3 or 2)
+        if type(line) ~= "table" or Field(line, "type") ~= types.None then return end
+    end
     local text = Field(line, "leftText")
     if type(text) ~= "string" or text == "" then return end
     -- This client can also return the level as an untyped line when no title
     -- exists. Use the game's localized label, as in ElvUI's GetTitleNPC.
-    if type(LEVEL) == "string" and LEVEL ~= ""
+    if not ownerTitle and type(LEVEL) == "string" and LEVEL ~= ""
         and text:lower():find(LEVEL:lower(), 1, true) then return end
-    record.npcTitle = text
+    record.unitTitle = text
     return text
 end
 
@@ -388,8 +403,11 @@ local function ShowSubtitle(frame, unit)
     local text
     if db.showGuild and Flag(UnitIsPlayer, unit) == true then
         text = Read(GetGuildInfo, unit)
+    elseif db.includeMinions and db.showMinionTitle and Flag(UnitIsPlayer, unit) == false
+        and Flag(UnitIsMinion, unit) == true then
+        text = UnitTitle(frame, unit, true)
     elseif db.includeNPCs and db.showNPCTitle and IsOrdinaryNPC(unit) then
-        text = NPCTitle(frame, unit)
+        text = UnitTitle(frame, unit)
     end
     if type(text) ~= "string" or text == "" then return HideSubtitle(frame) end
     local label = subtitleLabels[frame]
@@ -663,7 +681,7 @@ local function UpdatePlate(unit)
     if record.frame ~= frame then
         if record.frame then RestoreFrame(record.frame) end
         record.frame = frame
-        record.npcTitle, record.nextTitleRead = nil, nil
+        record.unitTitle, record.nextTitleRead = nil, nil
     end
     if not Accessible(frame) or not frame.unit then return end
 
@@ -819,7 +837,7 @@ end
 
 local function RefreshPreferences()
     groupSnapshot = nil
-    for _, record in pairs(plates) do record.npcTitle, record.nextTitleRead, record.owner = nil, nil, nil end
+    for _, record in pairs(plates) do record.unitTitle, record.nextTitleRead, record.owner = nil, nil, nil end
     if not db.enabled then RestoreAll() end
     if not db.classColorsOnly then for name in pairs(nameColors) do RestoreNameColor(name) end end
     ApplyCVars()
@@ -862,8 +880,8 @@ local function SetOption(key, value)
     local range = RANGES[key]
     if range and (value ~= value or value < range[1] or value > range[2]) then return end
     db[key] = value
-    if key == "includeNPCs" or key == "showNPCTitle" then
-        for _, record in pairs(plates) do record.npcTitle, record.nextTitleRead = nil, nil end
+    if key == "includeNPCs" or key == "showNPCTitle" or key == "includeMinions" or key == "showMinionTitle" then
+        for _, record in pairs(plates) do record.unitTitle, record.nextTitleRead = nil, nil end
     end
     if not db.enabled then RestoreAll() end
     if not db.classColorsOnly then
@@ -999,6 +1017,7 @@ local function Status(emit)
     emit(string.format(L.STATUS_COUNTS, Count(plates), Count(nameOnlyFrames), Count(forbidden)))
     emit(string.format(L.STATUS_COLORS, db.classColorsOnly and L.VALUE_YES or L.VALUE_NO))
     emit(string.format(L.STATUS_GUILD, db.showGuild and L.VALUE_YES or L.VALUE_NO))
+    emit(string.format(L.STATUS_MINION_TITLE, db.showMinionTitle and L.VALUE_YES or L.VALUE_NO))
     emit(string.format(L.STATUS_NPCS, db.includeNPCs and L.VALUE_YES or L.VALUE_NO,
         db.showNPCBars and L.VALUE_YES or L.VALUE_NO, db.showNPCTitle and L.VALUE_YES or L.VALUE_NO))
     emit(string.format(L.STATUS_RULES, db.showGroup and L.VALUE_YES or L.VALUE_NO,
@@ -1168,7 +1187,7 @@ driver:SetScript("OnEvent", function(_, event, unit)
             end
         end
         if unit == "colorblindmode" then
-            for _, record in pairs(plates) do record.npcTitle, record.nextTitleRead = nil, nil end
+            for _, record in pairs(plates) do record.unitTitle, record.nextTitleRead = nil, nil end
             UpdateAll()
         end
     elseif event == "NAME_PLATE_UNIT_ADDED" then
@@ -1181,7 +1200,7 @@ driver:SetScript("OnEvent", function(_, event, unit)
     elseif event == "UNIT_FLAGS" or event == "UNIT_FACTION" or event == "UNIT_NAME_UPDATE" then
         groupSnapshot = nil
         local function UpdateMatched(token, record)
-            if event == "UNIT_NAME_UPDATE" then record.npcTitle, record.nextTitleRead = nil, nil end
+            if event == "UNIT_NAME_UPDATE" then record.unitTitle, record.nextTitleRead = nil, nil end
             if event == "UNIT_FACTION" then record.owner = nil end
             UpdatePlate(token)
         end
@@ -1199,7 +1218,12 @@ driver:SetScript("OnEvent", function(_, event, unit)
     elseif event == "UPDATE_MOUSEOVER_UNIT" then
         if db and db.showMouseover then UpdateAll() end
     elseif event == "GROUP_ROSTER_UPDATE" or event == "UNIT_PET" then
-        for _, record in pairs(plates) do record.owner = nil end
+        for token, record in pairs(plates) do
+            record.owner = nil
+            if event == "UNIT_PET" and Flag(UnitIsMinion, token) == true then
+                record.unitTitle, record.nextTitleRead = nil, nil
+            end
+        end
         UpdateAll()
     else
         UpdateAll()
