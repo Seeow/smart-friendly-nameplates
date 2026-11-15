@@ -333,11 +333,21 @@ CurseForge's native packager is configured through `.pkgmeta` for project
 version/tag checks and the release process. The webhook connection is configured
 separately; normal CI packaging runs never upload a release.
 
-For bug reports, include the client version, zone/instance type, `/sfn status`,
-and the first Lua error if present. Target the affected player and use
-`/sfn debug` to inspect their state and the reason for their display, or attach the
-text from **Copyable report**. Reports contain diagnostic settings and current
-target state.
+### Issues
+
+Open a [GitHub issue](https://github.com/Seeow/smart-friendly-nameplates/issues/new/choose)
+and choose **Bug report** or **Feature request**. Search existing issues first.
+
+For bugs, the form asks for the addon and client versions, steps to reproduce,
+and the zone, instance type and affected units. While the problem is visible,
+target the affected unit if possible and use `/sfn report` (or **Copyable report**
+in the options) to copy diagnostics. Include the first Lua error if present and
+mention other nameplate or UI addons. You can also attach a screenshot or short
+video of the current in-game result. If diagnostics are unavailable, explain
+that in the report. Reports contain diagnostic settings and current target state.
+
+The forms are maintained in `.github/ISSUE_TEMPLATE/` and become available on
+GitHub once the files are merged into the repository's default branch.
 
 ### In-game verification
 

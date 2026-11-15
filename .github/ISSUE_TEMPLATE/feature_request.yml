@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest an improvement to Smart Friendly Nameplates.
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please search existing issues before suggesting a feature.
+        Describe the in-game situation so the request can be evaluated against WoW Forever's nameplate restrictions.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the in-game situation and what is currently missing or inconvenient.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Suggested behaviour
+      description: Explain how you would like the addon to behave, with an example if possible.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Mention any existing options or workarounds you have tried.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Optionally attach a screenshot or short video of the current in-game result, or examples that help explain the request.
