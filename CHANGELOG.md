@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Add experimental sliders for `nameplateMaxDistance` and
+  `nameplatePlayerMaxDistance` (1–45), editing the character's live game
+  settings independently of addon profiles and filtering. Display client-stored
+  values and refused or limited changes, and block protected edits in combat.
+- Preserve original distance settings across reloads with a dedicated restore
+  button. Do not alter distances automatically on load or overwrite subsequent
+  external edits during restoration. Actual visibility limits require game tests.
+
 ## 0.2.3
 
 - Add an optional font-size slider for name-only text, adjustable from 8 to 32
