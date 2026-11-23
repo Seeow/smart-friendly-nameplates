@@ -87,8 +87,8 @@ local function Checkbox(key, title, description, callback, applies, dependency)
     return check
 end
 
-local function Slider(key, title, minimum, maximum, step, applies)
-    local row = SettingRow(title, L.UI_SUBTITLES_HELP, applies, L.UI_REQUIRES_SUBTITLES)
+local function Slider(key, title, minimum, maximum, step, applies, description, requires)
+    local row = SettingRow(title, description or L.UI_SUBTITLES_HELP, applies, requires or L.UI_REQUIRES_SUBTITLES)
     local label = row.frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     label:SetJustifyH("LEFT")
     label:SetText(title)
@@ -436,6 +436,10 @@ function addon.RegisterOptions()
         L.UI_NPC_COLORS_DESC, nil, NPCNames, L.UI_REQUIRES_NPC_NAMES)
 
     Section(L.UI_SECTION_APPEARANCE)
+    Checkbox("customNameSize", L.UI_CUSTOM_NAME_SIZE, L.UI_CUSTOM_NAME_SIZE_DESC)
+    local function CustomNameSize(options) return options.enabled and options.customNameSize end
+    Slider("nameSize", L.UI_NAME_SIZE, 8, 32, 1, CustomNameSize,
+        L.UI_CUSTOM_NAME_SIZE_DESC, L.UI_REQUIRES_NAME_SIZE)
     Checkbox("classColorsOnly", L.UI_COLORS, L.UI_COLORS_DESC)
     Checkbox("showGuild", L.UI_GUILD, L.UI_GUILD_DESC)
     Text("GameFontHighlightSmall", L.UI_SUBTITLES_HELP)

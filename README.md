@@ -118,6 +118,11 @@ it. The general Restore defaults button is at the top of the panel.
   its visible name, when available. Requires NPC support and hidden health bars.
 - **Use native colours for name-only NPCs**: use the game's selection colour,
   green for friendly NPCs, while their health bar is hidden. Enabled by default.
+- **Use custom font size for name-only text**: enable a separate font size for
+  names whose health bars are hidden. The **Name-only font size** slider uses
+  steps of 1 from 8 to 32 (default 12). Applies to filtered players, minions and
+  NPCs, independently of class colours and subtitles. Disabled by default;
+  full health bars keep the game's native name size.
 - **Subtitle appearance**: choose font size (8–24, default 12), gap below the
   name (0–12, default 2), colour using the game's native colour picker, and
   whether to wrap the text in `<…>` (on by default). Click the colour swatch
@@ -129,7 +134,8 @@ it. The general Restore defaults button is at the top of the panel.
   colours; disable minions, target/focus/mouseover rules, guild and NPC support.
   Minion titles default to off. NPC preferences default to names only with titles,
   with the NPC-target rule off.
-  Reset subtitle appearance too. Only the active profile changes.
+  Disable custom name sizing and reset name and subtitle appearance too. Only
+  the active profile changes.
 - **Print status** and **Inspect target**: print diagnostics and the reason for
   a unit's display, including protected or paused nameplates.
 - **Retry setup**: reapply required game settings and rescan accessible
@@ -364,9 +370,14 @@ verified in game, check:
 3. A game setting changed manually while the addon is active. Confirm a conflict
    is reported without a repeated fight over the setting, then try **Retry setup**.
    Repeat setup changes in combat and verify that only game-setting writes wait.
-4. Guild, minion-title and NPC-title appearance at different interface scales,
-   through bar visibility changes and nameplate reuse. Switch between all nameplate styles,
-   including Large and Block: names alone must stay centered; full bars must
+4. Custom name-only font sizes and guild, minion-title and NPC-title appearance
+   at different interface scales. Check that font size changes affect names
+   only while their bars are hidden and that full bars restore the current
+   native size after changing the game's nameplate size or style. Check
+   custom sizing on players, minions and NPCs, with class colours off as well
+   as on, and after switching profiles or disabling the addon. Check subtitles
+   through bar visibility changes and nameplate reuse. Switch between all
+   nameplate styles, including Large and Block: names alone must stay centered; full bars must
    regain the current style's native alignment. Check the report dialog with a
    long report and a narrow or scaled interface.
 5. Town crowds, pets/guardians/totems, party/raid changes and protected nameplates

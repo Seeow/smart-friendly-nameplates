@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.3
+
+- Add an optional font-size slider for name-only text, adjustable from 8 to 32
+  independently of subtitle size and class colours. Save it per profile and
+  restore the current native font size when full health bars return or the
+  option is disabled. Disabled by default.
+- Preserve the native name size through client font-height normalization and
+  layout recalculations, including when unchecking custom sizing or returning
+  to full health bars.
+
 ## 0.2.2
 
 - Let name-only text use its natural width so long names are no longer truncated
