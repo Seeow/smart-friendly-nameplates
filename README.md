@@ -156,7 +156,7 @@ Labels, descriptions, chat messages, warnings and diagnostics follow `GetLocale(
 There is no separate language preference to keep in sync with the game. Translated
 button labels wrap and the panel adjusts its layout to fit them.
 
-## Experimental distance controls on this branch
+## Experimental nameplate distance
 
 In `/sfn`, **Experimental nameplate distance** provides two sliders from 1 to
 45: **General nameplate distance** (`nameplateMaxDistance`) and **Player
@@ -170,7 +170,7 @@ bars or names only. The displayed value is what the client stores, not a measure
 visibility range; the engine may enforce a shorter range even when it accepts a
 larger number. Refused changes and different stored values are shown in the panel.
 
-Use **Restore pre-test distances** to restore the original values, including
+Use **Restore initial distances** to restore the original values, including
 after `/reload`. Restoration preserves values changed elsewhere after the last
 slider edit. The general **Restore defaults** button resets addon profile
 preferences and does not reset these experimental game settings.
@@ -178,7 +178,7 @@ preferences and does not reset these experimental game settings.
 To test, record both initial values, vary one slider at a time, and observe an
 friendly player at a known distance. Keep the unit **untargeted**:
 the selected target can have a nameplate beyond the usual range. Compare both
-names-only and full-bar displays, then restore the pre-test distances.
+names-only and full-bar displays, then restore the original distances.
 
 ## Profiles
 
