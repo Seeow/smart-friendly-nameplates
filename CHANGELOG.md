@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.4
+
 - Add experimental sliders for `nameplateMaxDistance` and
   `nameplatePlayerMaxDistance` (1–45), editing the character's live game
   settings independently of addon profiles and filtering. Display client-stored
