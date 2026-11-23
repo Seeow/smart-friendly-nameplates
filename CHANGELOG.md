@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.3
 
 - Add an optional font-size slider for name-only text, adjustable from 8 to 32
   independently of subtitle size and class colours. Save it per profile and
