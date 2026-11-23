@@ -4119,15 +4119,15 @@ end)
 
 test("distance edits are independent and restore original values across reload and profiles", function()
     local ctx = Context()
-    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 80), true)
+    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 35), true)
     equal(ctx.cvars.nameplatePlayerMaxDistance, "40.000000")
-    ctx.addon.SetDistanceCVar("nameplatePlayerMaxDistance", 60)
-    ctx.addon.SetDistanceCVar("nameplateMaxDistance", 90)
+    ctx.addon.SetDistanceCVar("nameplatePlayerMaxDistance", 30)
+    ctx.addon.SetDistanceCVar("nameplateMaxDistance", 25)
     ctx.addon.SetProfile("global")
     ctx.addon.SetOption("enabled", false)
     ctx.addon.RestoreDefaults()
-    equal(ctx.cvars.nameplateMaxDistance, "90")
-    equal(ctx.cvars.nameplatePlayerMaxDistance, "60")
+    equal(ctx.cvars.nameplateMaxDistance, "25")
+    equal(ctx.cvars.nameplatePlayerMaxDistance, "30")
     local reload = Context(ctx)
     equal(reload.addon.CanRestoreDistanceCVars(), true)
     reload.addon.RestoreDistanceCVars()
@@ -4141,21 +4141,21 @@ end)
 test("distance writes reject invalid input combat and unavailable or secret settings", function()
     local ctx = Context()
     local count = #ctx.writes
-    for _, value in ipairs({ -1, 0, 101, 20.5, "40", math.huge, 0 / 0 }) do
+    for _, value in ipairs({ -1, 0, 46, 100, 20.5, "40", math.huge, 0 / 0 }) do
         equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", value), false)
     end
     equal(ctx.addon.SetDistanceCVar("nameplateShowEnemies", 1), false)
     ctx.combat = true
     ctx:emit("PLAYER_REGEN_DISABLED")
     equal(ctx.addon.GetDistanceState("nameplateMaxDistance").status, "combat")
-    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 80), false)
+    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 35), false)
     ctx.addon.RestoreDistanceCVars()
     ctx.combat = false
     ctx.cvars.nameplateMaxDistance = SECRET
     equal(ctx.addon.GetDistanceState("nameplateMaxDistance").status, "unavailable")
-    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 80), false)
+    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 35), false)
     ctx.cvars.nameplateMaxDistance = nil
-    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 80), false)
+    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 35), false)
     ctx.cvars.nameplateMaxDistance = "not a number"
     equal(ctx.addon.GetDistanceState("nameplateMaxDistance").canEdit, false)
     equal(#ctx.writes, count)
@@ -4165,20 +4165,20 @@ test("distance readback handles normalization limits delayed events failures and
     local ctx = Context()
     local setter = ctx.env.C_CVar.SetCVar
     ctx.env.C_CVar.SetCVar = function(name, value)
-        setter(name, string.format("%.6f", math.min(tonumber(value), 50)))
+        setter(name, string.format("%.6f", math.min(tonumber(value), 30)))
     end
-    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 50), true)
-    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 80), false)
+    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 30), true)
+    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 40), false)
     ctx:emit("CVAR_UPDATE", "nameplateMaxDistance")
     local state = ctx.addon.GetDistanceState("nameplateMaxDistance")
     equal(state.status, "limited")
-    equal(state.requested, 80)
-    equal(state.value, 50)
+    equal(state.requested, 40)
+    equal(state.value, 30)
     ctx.failWrite = true
-    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 30), false)
+    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 20), false)
     equal(ctx.addon.GetDistanceState("nameplateMaxDistance").status, "limited")
     ctx.env.C_CVar.SetCVar = function() error("blocked") end
-    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 30), false)
+    equal(ctx.addon.SetDistanceCVar("nameplateMaxDistance", 20), false)
     equal(ctx.addon.GetDistanceState("nameplateMaxDistance").status, "error")
     ctx.env.C_CVar.SetCVar, ctx.failWrite = setter, false
     ctx.addon.RestoreDistanceCVars()
@@ -4188,8 +4188,8 @@ end)
 
 test("distance restoration preserves external edits and retries a failed restoration", function()
     local ctx = Context()
-    ctx.addon.SetDistanceCVar("nameplateMaxDistance", 80)
-    ctx.addon.SetDistanceCVar("nameplatePlayerMaxDistance", 70)
+    ctx.addon.SetDistanceCVar("nameplateMaxDistance", 1)
+    ctx.addon.SetDistanceCVar("nameplatePlayerMaxDistance", 45)
     ctx.cvars.nameplateMaxDistance = "30"
     ctx:emit("CVAR_UPDATE", "NAMEPLATEMAXDISTANCE")
     equal(ctx.addon.GetDistanceState("nameplateMaxDistance").status, "ready")
@@ -4205,9 +4205,9 @@ test("distance restoration preserves external edits and retries a failed restora
     ctx.addon.RestoreDistanceCVars()
     equal(ctx.cvars.nameplatePlayerMaxDistance, "40.000000")
     equal(ctx.addon.CanRestoreDistanceCVars(), false)
-    ctx.addon.SetDistanceCVar("nameplateMaxDistance", 80)
+    ctx.addon.SetDistanceCVar("nameplateMaxDistance", 1)
     ctx.cvars.nameplateMaxDistance = "35"
-    ctx.addon.SetDistanceCVar("nameplateMaxDistance", 90)
+    ctx.addon.SetDistanceCVar("nameplateMaxDistance", 25)
     ctx.addon.RestoreDistanceCVars()
     equal(ctx.cvars.nameplateMaxDistance, "35", "a later test uses the external setting as its baseline")
 end)
@@ -4217,15 +4217,15 @@ test("distance sliders show live values and disable in combat in all locales", f
         local ctx = Context(nil, { locale = locale })
         local L, distanceSliders = ctx.addon.L, {}
         for _, widget in ipairs(ctx.widgets) do
-            if widget.kind == "Slider" and widget.minimum == 1 and widget.maximum == 100 then
+            if widget.kind == "Slider" and widget.minimum == 1 and widget.maximum == 45 then
                 distanceSliders[#distanceSliders + 1] = widget
             end
         end
         equal(#distanceSliders, 2)
         equal(distanceSliders[1]:GetValue(), 45)
         equal(distanceSliders[2]:GetValue(), 40)
-        distanceSliders[1]:SetValue(80)
-        equal(ctx.cvars.nameplateMaxDistance, "80")
+        distanceSliders[1]:SetValue(35)
+        equal(ctx.cvars.nameplateMaxDistance, "35")
         equal(ctx.cvars.nameplatePlayerMaxDistance, "40.000000")
         ctx.combat = true
         ctx:emit("PLAYER_REGEN_DISABLED")
@@ -4237,6 +4237,14 @@ test("distance sliders show live values and disable in combat in all locales", f
         equal(distanceSliders[1]:IsEnabled(), true)
         ctx:click(L.UI_DISTANCE_RESTORE)
         equal(distanceSliders[1]:GetValue(), 45)
+        ctx.cvars.nameplateMaxDistance = "100"
+        local writes = #ctx.writes
+        ctx:emit("CVAR_UPDATE", "nameplateMaxDistance")
+        equal(distanceSliders[1].maximum, 45)
+        equal(distanceSliders[1]:GetValue(), 45)
+        equal(ctx.cvars.nameplateMaxDistance, "100")
+        equal(#ctx.writes, writes, "an earlier test value is not overwritten on refresh")
+        assert(ctx:hasText(L.UI_DISTANCE_OUT_OF_RANGE))
         ctx.cvars.nameplatePlayerMaxDistance = nil
         ctx:emit("CVAR_UPDATE", "nameplatePlayerMaxDistance")
         equal(distanceSliders[2]:IsEnabled(), false)

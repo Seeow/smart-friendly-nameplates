@@ -159,7 +159,7 @@ button labels wrap and the panel adjusts its layout to fit them.
 ## Experimental distance controls on this branch
 
 In `/sfn`, **Experimental nameplate distance** provides two sliders from 1 to
-100 yards: **General nameplate distance** (`nameplateMaxDistance`) and **Player
+45 yards: **General nameplate distance** (`nameplateMaxDistance`) and **Player
 nameplate distance** (`nameplatePlayerMaxDistance`). Each slider reads the live
 client setting and changes only that CVar when moved, outside combat. Opening
 the panel or loading this build does not change existing distances.

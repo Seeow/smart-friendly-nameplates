@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Add experimental sliders for `nameplateMaxDistance` and
-  `nameplatePlayerMaxDistance` (1–100 yards), editing the character's live game
+  `nameplatePlayerMaxDistance` (1–45 yards), editing the character's live game
   settings independently of addon profiles and filtering. Display client-stored
   values and refused or limited changes, and block protected edits in combat.
 - Preserve pre-test distance settings across reloads with a dedicated restore

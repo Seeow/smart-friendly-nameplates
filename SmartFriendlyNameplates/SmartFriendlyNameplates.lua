@@ -926,7 +926,7 @@ end
 
 function addon.SetDistanceCVar(name, value)
     if not characterDB or not IsDistanceCVar(name) or type(value) ~= "number"
-        or value ~= value or value < 1 or value > 100 or value ~= math.floor(value) then return false end
+        or value ~= value or value < 1 or value > 45 or value ~= math.floor(value) then return false end
     if InCombatLockdown() then RefreshOptions(); return false end
     local current, before = DistanceValue(name)
     if current == nil then RefreshOptions(); return false end

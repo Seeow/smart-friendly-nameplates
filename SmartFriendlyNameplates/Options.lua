@@ -120,16 +120,16 @@ local function DistanceSlider(name, title, description)
     label:SetJustifyH("LEFT")
     label:SetText(title)
     local slider = CreateFrame("Slider", nil, row.frame, "OptionsSliderTemplate")
-    slider:SetMinMaxValues(1, 100)
+    slider:SetMinMaxValues(1, 45)
     slider:SetValueStep(1)
     slider:SetObeyStepOnDrag(true)
     if slider.Low then slider.Low:SetText("1") end
-    if slider.High then slider.High:SetText("100") end
+    if slider.High then slider.High:SetText("45") end
     if slider.Text then slider.Text:SetText("") end
     slider:SetScript("OnValueChanged", function(_, value)
         if refreshing then return end
         local rounded = math.floor(value + 0.5)
-        if rounded >= 1 and rounded <= 100 then addon.SetDistanceCVar(name, rounded)
+        if rounded >= 1 and rounded <= 45 then addon.SetDistanceCVar(name, rounded)
         else addon.RefreshOptions() end
     end)
     row.slider, row.label, row.cvar = slider, label, name
@@ -315,13 +315,9 @@ function addon.RefreshOptions()
     for _, row in ipairs(distanceRows) do
         local distance = addon.GetDistanceState(row.cvar)
         local value = distance.value
-        -- Display existing values outside the test range without changing them.
-        local minimum = value and math.min(1, math.floor(value)) or 1
-        local maximum = value and math.max(100, math.ceil(value)) or 100
-        row.slider:SetMinMaxValues(minimum, maximum)
-        if row.slider.Low then row.slider.Low:SetText(tostring(minimum)) end
-        if row.slider.High then row.slider.High:SetText(tostring(maximum)) end
-        row.slider:SetValue(value or minimum)
+        -- Keep the thumb within 1–45 while reporting the actual stored value,
+        -- including earlier tests above 45. Refreshing never rewrites the CVar.
+        row.slider:SetValue(math.max(1, math.min(45, value or 1)))
         row.value:SetText(value and string.format(L.UI_DISTANCE_VALUE, value) or L.VALUE_UNAVAILABLE)
         row.slider:SetEnabled(distance.canEdit)
         local alpha = distance.canEdit and 1 or 0.5
@@ -334,6 +330,7 @@ function addon.RefreshOptions()
         elseif status == "combat" then row.status:SetText(L.UI_DISTANCE_COMBAT)
         elseif status == "unavailable" then row.status:SetText(L.UI_DISTANCE_UNAVAILABLE)
         elseif status == "error" then row.status:SetText(L.UI_DISTANCE_ERROR)
+        elseif value and (value < 1 or value > 45) then row.status:SetText(L.UI_DISTANCE_OUT_OF_RANGE)
         else row.status:SetText(L.UI_DISTANCE_STORED) end
     end
     if restoreDistances then restoreDistances:SetEnabled(addon.CanRestoreDistanceCVars()) end
