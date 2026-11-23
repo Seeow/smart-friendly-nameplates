@@ -20,6 +20,8 @@ local DEFAULTS = {
     showFocus = false,
     showMouseover = false,
     npcShowTarget = false,
+    customNameSize = false,
+    nameSize = 12,
     subtitleSize = 12,
     subtitleOffset = 2,
     subtitleRed = 0.7,
@@ -28,7 +30,7 @@ local DEFAULTS = {
     subtitleBrackets = true,
 }
 addon.DEFAULTS = DEFAULTS
-local RANGES = { subtitleSize = { 8, 24 }, subtitleOffset = { 0, 12 },
+local RANGES = { nameSize = { 8, 32 }, subtitleSize = { 8, 24 }, subtitleOffset = { 0, 12 },
     subtitleRed = { 0, 1 }, subtitleGreen = { 0, 1 }, subtitleBlue = { 0, 1 } }
 local SELECTION_RULES = { { "showTarget", "target" }, { "showFocus", "focus" }, { "showMouseover", "mouseover" } }
 local PREFIX = "|cff66ccffSmart Friendly Nameplates:|r "
@@ -49,6 +51,8 @@ local nameOnlyFrames = setmetatable({}, { __mode = "k" })
 local nameColors = setmetatable({}, { __mode = "k" })
 local nameLayouts = setmetatable({}, { __mode = "k" })
 local nameWidths = setmetatable({}, { __mode = "k" })
+local nameFonts = setmetatable({}, { __mode = "k" })
+local pendingNameFonts = setmetatable({}, { __mode = "k" })
 local layoutHooks = setmetatable({}, { __mode = "k" })
 local centerStatus = setmetatable({}, { __mode = "k" })
 local InstallLayoutHook
@@ -108,6 +112,79 @@ end
 
 local function Accessible(frame)
     return frame and not frame:IsForbidden()
+end
+
+local function NameFont(name)
+    if not Accessible(name) or type(name.GetFont) ~= "function" then return end
+    local ok, path, size, flags = pcall(name.GetFont, name)
+    if not ok then return end
+    for _, value in pairs({ path, size, flags }) do
+        if issecretvalue and issecretvalue(value) then return end
+    end
+    if type(path) ~= "string" or path == "" or type(size) ~= "number"
+        or size <= 0 or size ~= size or size == math.huge or type(flags) ~= "string" then return end
+    return path, size, flags
+end
+
+local function SameFontSize(left, right)
+    -- The client can normalize a requested font height to a nearby float.
+    return math.abs(left - right) < 0.01
+end
+
+local function SameNativeFont(saved, path, flags, setupSize)
+    return path == saved.path and flags == saved.flags and setupSize == saved.setupSize
+end
+
+local function RestoreNameFont(name)
+    local saved = nameFonts[name]
+    if not saved then pendingNameFonts[name] = nil; return end
+    -- A temporarily restricted read/write must not strand our custom size
+    -- after removal, a paused plate, or disabling the filter stops updates.
+    pendingNameFonts[name] = true
+    if Accessible(name) then
+        local path, size, flags = NameFont(name)
+        if not path then return end
+        local setupSize = Read(function() return NamePlateSetupOptions.healthBarFontHeight end)
+        -- Native layout can derive another height from our resized text, even
+        -- immediately before bars return. Restore that too when the native
+        -- font configuration is unchanged; preserve newer paths/flags.
+        if SameFontSize(size, saved.applied) or SameNativeFont(saved, path, flags, setupSize) then
+            local ok, result = pcall(name.SetFont, name, path, saved.before, flags)
+            if not ok or result == false then Warn("font", L.ERROR_RESTORE_VISUAL); return end
+        end
+    end
+    nameFonts[name] = nil
+    pendingNameFonts[name] = nil
+end
+
+local function SizeName(name)
+    if not db.customNameSize then return RestoreNameFont(name) end
+    if name then pendingNameFonts[name] = nil end
+    local path, size, flags = NameFont(name)
+    if not path or type(name.SetFont) ~= "function" then return end
+    local saved = nameFonts[name]
+    local setupSize = Read(function() return NamePlateSetupOptions.healthBarFontHeight end)
+    if saved and not SameFontSize(size, saved.applied) then
+        -- UpdateAnchors derives a height from GetLineHeight, which may already
+        -- include our custom size. That is not a new native font baseline.
+        local derived = SameNativeFont(saved, path, flags, setupSize)
+        if not derived then saved.before = size end
+    end
+    if saved then saved.path, saved.flags, saved.setupSize = path, flags, setupSize end
+    if saved and saved.requested == db.nameSize and SameFontSize(size, saved.applied) then return end
+    if not saved and SameFontSize(size, db.nameSize) then return end
+    saved = saved or { before = size }
+    nameFonts[name] = saved
+    -- Record the attempted size before the write so error recovery can also
+    -- undo a visual method that changes the font and then raises an error.
+    saved.applied = db.nameSize
+    saved.requested, saved.path, saved.flags, saved.setupSize = db.nameSize, path, flags, setupSize
+    local ok, result = pcall(name.SetFont, name, path, db.nameSize, flags)
+    local _, currentSize = NameFont(name)
+    saved.applied = currentSize or saved.applied
+    if not ok or result == false then
+        error(ok and L.ERROR_RESTORE_VISUAL or result)
+    end
 end
 
 local function VertexColor(region)
@@ -493,6 +570,7 @@ end
 local function RestoreNameVisuals(frame)
     RestoreNameLayout(frame)
     if frame.name then
+        RestoreNameFont(frame.name)
         RestoreNameWidth(frame.name)
         RestoreNameColor(frame.name)
     end
@@ -500,6 +578,7 @@ local function RestoreNameVisuals(frame)
 end
 
 local function UpdateNameVisuals(frame, unit)
+    SizeName(frame.name)
     CenterName(frame)
     if centerStatus[frame] ~= "layout-unavailable" and centerStatus[frame] ~= "no-container-anchor" then
         ClearNameWidth(frame.name)
@@ -1077,6 +1156,7 @@ local function Status(emit)
         db.includeMinions and L.VALUE_YES or L.VALUE_NO))
     emit(string.format(L.STATUS_SELECTIONS, db.showFocus and L.VALUE_YES or L.VALUE_NO,
         db.showMouseover and L.VALUE_YES or L.VALUE_NO, db.npcShowTarget and L.VALUE_YES or L.VALUE_NO))
+    emit(string.format(L.STATUS_NAME_SIZE, db.customNameSize and L.VALUE_YES or L.VALUE_NO, db.nameSize))
     emit(string.format(L.STATUS_SUBTITLE, db.subtitleSize, db.subtitleOffset,
         db.subtitleRed, db.subtitleGreen, db.subtitleBlue, db.subtitleBrackets and L.VALUE_YES or L.VALUE_NO))
     for _, setting in ipairs(CVARS) do
@@ -1110,6 +1190,7 @@ local function CenterDiagnostics(frame)
     local explicitWidth = Read(frame.name.GetWidth, frame.name, true)
     local truncated = Flag(frame.name.IsTruncated, frame.name)
     local style = Read(function() return NamePlateSetupOptions.unitNameAnchorStyle end)
+    local _, fontSize = NameFont(frame.name)
     return "nameCenter=" .. (centerStatus[frame] or "inactive")
         .. "; justify=" .. (type(justify) == "string" and justify or "unavailable")
         .. "; layout=" .. (NameLayout(frame.name) and "readable" or "unavailable")
@@ -1118,6 +1199,7 @@ local function CenterDiagnostics(frame)
         .. "; explicitWidth=" .. (type(explicitWidth) == "number" and tostring(explicitWidth) or "unavailable")
         .. "; truncated=" .. (truncated == nil and "unavailable" or tostring(truncated))
         .. "; anchorStyle=" .. ((type(style) == "string" or type(style) == "number") and tostring(style) or "unavailable")
+        .. "; nameFontSize=" .. (fontSize and tostring(fontSize) or "unavailable")
 end
 
 local function DebugTarget()
@@ -1292,12 +1374,13 @@ end)
 
 driver:SetScript("OnUpdate", function(_, elapsed)
     updateTime = updateTime + elapsed
-    if not db or not db.enabled or not next(plates) then return end
+    if not db or ((not db.enabled or not next(plates)) and not next(pendingNameFonts)) then return end
     elapsedSinceUpdate = elapsedSinceUpdate + elapsed
     if elapsedSinceUpdate < INTERVAL then return end
     elapsedSinceUpdate = 0
+    for name in pairs(pendingNameFonts) do RestoreNameFont(name) end
     -- Other players can enter/leave combat without our own combat changing.
-    UpdateAll()
+    if db.enabled and next(plates) then UpdateAll() end
 end)
 
 for _, event in ipairs({

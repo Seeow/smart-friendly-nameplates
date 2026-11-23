@@ -368,6 +368,11 @@ local function Context(previous, options)
             name:SetPoint("BOTTOMLEFT", container, "TOPLEFT", 0, 3)
             name:SetPoint("RIGHT", container, "RIGHT", 0, 0)
         end
+        if self.deriveFontHeight then
+            -- Native UpdateAnchors uses SetFontHeight(GetLineHeight()). Its
+            -- derived height can differ from the GetFont size we last wrote.
+            name.fontSize = name.fontSize * 0.9
+        end
         for _, callback in ipairs(self.layoutHooks[frame] or {}) do callback(frame) end
     end
     function ctx:unit(token, properties, frame)
@@ -390,6 +395,15 @@ local function Context(previous, options)
             frame.name = { shown = true, alpha = 1, text = "Native name", colour = "native",
                 points = {}, geometryWrites = 0 }
             function frame.name:SetAlpha() error("must never fade the name") end
+            frame.name.fontPath, frame.name.fontSize, frame.name.fontFlags = "Fonts/FRIZQT__.TTF", 12, "OUTLINE"
+            frame.name.fontWrites = 0
+            function frame.name:GetFont() return self.fontPath, self.fontSize, self.fontFlags end
+            function frame.name:SetFont(path, size, flags)
+                assert(not frame.forbidden, "modified forbidden font")
+                self.fontWrites = self.fontWrites + 1
+                self.fontPath, self.fontSize, self.fontFlags = path, size, flags
+                return true
+            end
             frame.name.vertexColor = { 0, 1, 0, 1 }
             function frame.name:IsForbidden() return frame.forbidden end
             function frame.name:IsShown() return self.shown end
@@ -3530,6 +3544,7 @@ end)
 test("numeric preferences reject invalid values and repair malformed saved data", function()
     local ctx = Context()
     for key, values in pairs({
+        nameSize = { 7, 33, false, "18", 0 / 0, math.huge },
         subtitleSize = { 7, 25, false, "18", 0 / 0, math.huge },
         subtitleOffset = { -1, 13, false, "4" },
         subtitleRed = { -0.1, 1.1, "0.5" },
@@ -3541,9 +3556,11 @@ test("numeric preferences reject invalid values and repair malformed saved data"
         end
     end
     local reload = Context({ env = { SmartFriendlyNameplatesDB = {
+        nameSize = 0 / 0,
         subtitleSize = -100, subtitleOffset = math.huge, subtitleBlue = 0 / 0,
     } } })
     equal(reload.addon.GetOptions().subtitleSize, 12)
+    equal(reload.addon.GetOptions().nameSize, 12)
     equal(reload.addon.GetOptions().subtitleOffset, 2)
     equal(reload.addon.GetOptions().subtitleBlue, 0.7)
 end)
@@ -3728,6 +3745,9 @@ test("appearance-only changes in combat do not invent pending game settings", fu
     ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
     ctx.combat = true
     local writes = #ctx.writes
+    ctx.addon.SetOption("customNameSize", true)
+    ctx.addon.SetOption("nameSize", 20)
+    equal(frame.name.fontSize, 20)
     ctx.addon.SetOption("subtitleRed", 0.2)
     ctx.addon.SetOption("showFocus", true)
     equal(#ctx.writes, writes)
@@ -3755,6 +3775,327 @@ test("repair preserves forbidden observations and missing plates are diagnosed e
     equal(ctx.addon.ExplainUnit("target"), "no-plate")
     ctx:emit("FORBIDDEN_NAME_PLATE_UNIT_REMOVED", "nameplate1")
     equal(ctx.addon.ExplainUnit("nameplate1"), "no-plate")
+end)
+
+test("name-only font sizing is opt-in and independent of colours and subtitles", function()
+    local ctx = Context()
+    ctx.addon.SetOption("nameSize", 20)
+    ctx.addon.SetOption("classColorsOnly", false)
+    ctx.addon.SetOption("showGuild", true)
+    ctx.addon.SetOption("subtitleSize", 16)
+    local _, frame = ctx:unit("nameplate1", { guild = "Example" })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    equal(frame.name.fontWrites, 0, "existing profiles retain native sizing")
+    ctx.addon.SetOption("customNameSize", true)
+    equal(frame.name.fontSize, 20)
+    equal(frame.extraRegions[1].fontSize, 16)
+    equal(frame.name.fontFlags, "OUTLINE")
+    equal(BarVisible(frame), 0)
+    local writes = frame.name.fontWrites
+    ctx:tick()
+    ctx:nativeNameUpdate(frame)
+    ctx:nativeLayout(frame, "Large")
+    equal(frame.name.fontWrites, writes, "unchanged names need no font writes")
+    ctx.addon.SetOption("nameSize", 22)
+    equal(frame.name.fontSize, 22)
+    ctx.addon.SetOption("customNameSize", false)
+    equal(frame.name.fontSize, 12)
+    equal(frame.extraRegions[1].fontSize, 16)
+end)
+
+test("normalized font heights do not replace the native size or trigger repeated writes", function()
+    for _, exit in ipairs({ "uncheck", "group", "combat", "off" }) do
+        local ctx = Context()
+        ctx.addon.SetOption("customNameSize", true)
+        ctx.addon.SetOption("nameSize", 20)
+        local unit, frame = ctx:unit("nameplate1")
+        local nativeSetFont = frame.name.SetFont
+        frame.name.SetFont = function(self, path, size, flags)
+            return nativeSetFont(self, path, size * 1.000001, flags)
+        end
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        local writes = frame.name.fontWrites
+        for _ = 1, 5 do ctx:tick(); ctx:nativeNameUpdate(frame) end
+        equal(frame.name.fontWrites, writes, "GetFont need not equal the requested height")
+        if exit == "uncheck" then ctx.addon.SetOption("customNameSize", false)
+        elseif exit == "off" then ctx:command("off")
+        else
+            if exit == "group" then unit.party = true else unit.combat = true end
+            ctx:tick()
+        end
+        assert(math.abs(frame.name.fontSize - 12) < 0.001, exit .. " must restore the native size")
+        if exit ~= "uncheck" then equal(BarVisible(frame), 1, exit) end
+    end
+end)
+
+test("native layout-derived font heights do not become the restoration baseline", function()
+    for _, hookAvailable in ipairs({ true, false }) do
+        local ctx = Context()
+        ctx.failLayoutHook = not hookAvailable
+        ctx.addon.SetOption("customNameSize", true)
+        ctx.addon.SetOption("nameSize", 20)
+        local unit, frame = ctx:unit("nameplate1")
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        ctx.deriveFontHeight = true
+        for _, style in ipairs({ "Large", "Block", "Default" }) do
+            ctx:nativeLayout(frame, style)
+            ctx:tick()
+            equal(frame.name.fontSize, 20)
+        end
+        ctx.addon.SetOption("customNameSize", false)
+        equal(frame.name.fontSize, 12, "unchecking restores the pre-custom size")
+        ctx.addon.SetOption("customNameSize", true)
+        -- Switch to a full bar in the same native layout update, before any
+        -- name-only update can observe the derived custom height.
+        unit.party = true
+        ctx:nativeLayout(frame, "Large")
+        ctx:tick()
+        equal(frame.name.fontSize, 12, "group bars restore the pre-custom size")
+    end
+end)
+
+test("genuine native size changes update the restoration baseline", function()
+    local ctx = Context()
+    ctx.env.NamePlateSetupOptions.healthBarFontHeight = 12
+    ctx.addon.SetOption("customNameSize", true)
+    ctx.addon.SetOption("nameSize", 20)
+    local _, frame = ctx:unit("nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx.env.NamePlateSetupOptions.healthBarFontHeight = 16
+    frame.name:SetFont(frame.name.fontPath, 16, frame.name.fontFlags)
+    ctx:nativeLayout(frame, "Block")
+    equal(frame.name.fontSize, 20)
+    ctx.addon.SetOption("customNameSize", false)
+    equal(frame.name.fontSize, 16, "restore the newly selected Blizzard size")
+end)
+
+test("each player visibility rule restores native font size with full bars", function()
+    for _, rule in ipairs({ "group", "combat", "target", "focus", "mouseover" }) do
+        local ctx = Context()
+        ctx.addon.SetOption("customNameSize", true)
+        ctx.addon.SetOption("nameSize", 20)
+        local unit, frame = ctx:unit("nameplate1")
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(frame.name.fontSize, 20)
+        if rule == "group" then unit.party = true
+        elseif rule == "combat" then unit.combat = true
+        else
+            ctx[rule] = "nameplate1"
+            ctx.addon.SetOption(rule == "target" and "showTarget" or rule == "focus" and "showFocus" or "showMouseover", true)
+        end
+        ctx:tick()
+        equal(BarVisible(frame), 1, rule)
+        equal(frame.name.fontSize, 12, rule)
+        equal(frame.name.fontPath, "Fonts/FRIZQT__.TTF")
+        equal(frame.name.fontFlags, "OUTLINE")
+    end
+end)
+
+test("name font sizing covers eligible minions and NPCs without changing full bars", function()
+    local ctx = Context()
+    ctx.addon.SetOption("customNameSize", true)
+    ctx.addon.SetOption("nameSize", 21)
+    ctx.addon.SetOption("includeMinions", true)
+    ctx.addon.SetOption("includeNPCs", true)
+    local _, pet = ctx:unit("nameplate1", { player = false, minion = true })
+    local _, npc = ctx:unit("nameplate2", { player = false })
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+    equal(pet.name.fontSize, 21)
+    equal(npc.name.fontSize, 21)
+    ctx.target = "nameplate2"
+    ctx.addon.SetOption("npcShowTarget", true)
+    equal(npc.name.fontSize, 12)
+    ctx.target = nil
+    ctx:tick()
+    equal(npc.name.fontSize, 21)
+    ctx.addon.SetOption("showNPCBars", true)
+    equal(npc.name.fontSize, 12)
+    equal(pet.name.fontSize, 21)
+    ctx.addon.SetOption("includeMinions", false)
+    equal(pet.name.fontSize, 12)
+end)
+
+test("native font updates are repaired and the latest native size is restored", function()
+    for _, update in ipairs({ "name", "layout", "poll" }) do
+        local ctx = Context()
+        ctx.addon.SetOption("customNameSize", true)
+        ctx.addon.SetOption("nameSize", 20)
+        local _, frame = ctx:unit("nameplate1")
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        frame.name:SetFont("Fonts/NEW.TTF", 15, "THICKOUTLINE")
+        if update == "name" then ctx:nativeNameUpdate(frame)
+        elseif update == "layout" then ctx:nativeLayout(frame, "Block")
+        else ctx:tick() end
+        equal(frame.name.fontSize, 20, update)
+        ctx:command("off")
+        equal(frame.name.fontSize, 15, update)
+        equal(frame.name.fontPath, "Fonts/NEW.TTF")
+        equal(frame.name.fontFlags, "THICKOUTLINE")
+    end
+end)
+
+test("restoration preserves newer native paths flags and unobserved font sizes", function()
+    for _, nativeSize in ipairs({ 20, 17 }) do
+        local ctx = Context()
+        ctx.addon.SetOption("customNameSize", true)
+        ctx.addon.SetOption("nameSize", 20)
+        local _, frame = ctx:unit("nameplate1")
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        frame.name:SetFont("Fonts/NEW.TTF", nativeSize, "MONOCHROME")
+        ctx:command("off")
+        equal(frame.name.fontSize, nativeSize == 20 and 12 or nativeSize)
+        equal(frame.name.fontPath, "Fonts/NEW.TTF")
+        equal(frame.name.fontFlags, "MONOCHROME")
+    end
+end)
+
+test("name font sizing restores on plate removal and pooled frame reuse", function()
+    local ctx = Context()
+    ctx.addon.SetOption("customNameSize", true)
+    ctx.addon.SetOption("nameSize", 20)
+    local _, frame = ctx:unit("nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_REMOVED", "nameplate1")
+    equal(frame.name.fontSize, 12)
+    ctx:unit("nameplate2", {}, frame)
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate2")
+    equal(frame.name.fontSize, 20)
+    ctx:unit("nameplate3", { friendly = false }, frame)
+    ctx:nativeNameUpdate(frame)
+    equal(frame.name.fontSize, 12, "enemy reuse restores before its removal event")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate3")
+    equal(frame.name.fontSize, 12)
+end)
+
+test("restricted or malformed font reads skip sizing without pausing filtering", function()
+    local fontReads = {
+        function() error("restricted font") end,
+        function() return SECRET, 12, "" end,
+        function() return "Fonts/FRIZQT__.TTF", SECRET, "" end,
+        function() return "Fonts/FRIZQT__.TTF", 12, SECRET end,
+        function() return nil, nil, nil end,
+        function() return "", 12, "" end,
+        function() return "Fonts/FRIZQT__.TTF", 0 / 0, "" end,
+        function() return "Fonts/FRIZQT__.TTF", math.huge, "" end,
+        function() return "Fonts/FRIZQT__.TTF", -1, "" end,
+    }
+    for _, read in ipairs(fontReads) do
+        local ctx = Context()
+        ctx.addon.SetOption("customNameSize", true)
+        ctx.addon.SetOption("nameSize", 20)
+        local _, frame = ctx:unit("nameplate1")
+        local nativeRead = frame.name.GetFont
+        frame.name.GetFont = read
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        equal(frame.name.fontWrites, 0)
+        equal(BarVisible(frame), 0)
+        equal(#ctx.messages, 0)
+        assert(ctx.addon.BuildReport():find("nameFontSize=unavailable", 1, true))
+        frame.name.GetFont = nativeRead
+        ctx:tick()
+        equal(frame.name.fontSize, 20, "retry once the font becomes readable")
+    end
+end)
+
+test("font write failures restore earlier overrides and pause repeated attempts", function()
+    for _, failure in ipairs({ "false", "error", "partial" }) do
+        local ctx = Context()
+        ctx.addon.SetOption("customNameSize", true)
+        ctx.addon.SetOption("nameSize", 20)
+        local _, frame = ctx:unit("nameplate1")
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        local nativeSetFont = frame.name.SetFont
+        frame.name.SetFont = function(self, path, size, flags)
+            if size == 22 then
+                if failure == "partial" then nativeSetFont(self, path, size, flags) end
+                if failure == "false" then return false end
+                error("font refused")
+            end
+            return nativeSetFont(self, path, size, flags)
+        end
+        ctx.addon.SetOption("nameSize", 22)
+        equal(frame.name.fontSize, 12, failure)
+        equal(BarVisible(frame), 1)
+        equal(ctx.addon.ExplainUnit("nameplate1"), "failed")
+        local writes = frame.name.fontWrites
+        ctx:tick()
+        equal(frame.name.fontWrites, writes)
+        frame.name.SetFont = nativeSetFont
+        ctx.addon.Repair()
+        equal(frame.name.fontSize, 22)
+    end
+end)
+
+test("pending font restoration retries after disable removal and failed plates", function()
+    for _, exit in ipairs({ "disable", "remove", "failed" }) do
+        local ctx = Context()
+        ctx.addon.SetOption("customNameSize", true)
+        ctx.addon.SetOption("nameSize", 20)
+        local _, frame = ctx:unit("nameplate1")
+        ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        local nativeGetFont = frame.name.GetFont
+        frame.name.GetFont = function() return SECRET, SECRET, SECRET end
+        if exit == "disable" then ctx:command("off")
+        elseif exit == "remove" then ctx:emit("NAME_PLATE_UNIT_REMOVED", "nameplate1")
+        else
+            frame.decoration.alpha = 1
+            frame.decoration.SetAlpha = function() error("visual failure") end
+            ctx:tick()
+        end
+        equal(frame.name.fontSize, 20, "unreadable font must not be changed")
+        frame.name.GetFont = nativeGetFont
+        ctx:tick()
+        equal(frame.name.fontSize, 12, exit)
+        local writes = frame.name.fontWrites
+        ctx:tick()
+        equal(frame.name.fontWrites, writes, "successful restoration clears the retry")
+    end
+end)
+
+test("name font options survive profile switches copies reload and reset", function()
+    local ctx = Context()
+    local _, frame = ctx:unit("nameplate1")
+    ctx:emit("NAME_PLATE_UNIT_ADDED", "nameplate1")
+    ctx.addon.SetOption("customNameSize", true)
+    ctx.addon.SetOption("nameSize", 20)
+    ctx.addon.CopyProfile("global")
+    ctx.addon.SetProfile("global")
+    equal(frame.name.fontSize, 20)
+    ctx.addon.SetOption("nameSize", 24)
+    ctx.addon.SetProfile("character")
+    equal(frame.name.fontSize, 20)
+    ctx.addon.SetProfile("global")
+    equal(frame.name.fontSize, 24)
+    local reload = Context(ctx)
+    equal(reload.addon.GetOptions().nameSize, 24)
+    equal(reload.addon.GetOptions().customNameSize, true)
+    ctx.addon.RestoreDefaults()
+    equal(frame.name.fontSize, 12)
+    equal(ctx.addon.GetOptions().customNameSize, false)
+    equal(ctx.env.SmartFriendlyNameplatesDB.nameSize, 20, "reset changes only the active profile")
+end)
+
+test("localized name size slider shows its prerequisites and changes only names", function()
+    for _, locale in ipairs(clientLocales) do
+        local ctx = Context(nil, { locale = locale })
+        ctx:emit("PLAYER_ENTERING_WORLD")
+        local L, slider = ctx.addon.L
+        for _, widget in ipairs(ctx.widgets) do
+            if widget.kind == "Slider" and widget.minimum == 8 and widget.maximum == 32 then slider = widget end
+        end
+        assert(slider)
+        equal(slider.alpha, 0.5)
+        slider.scripts.OnEnter(slider)
+        equal(ctx.env.GameTooltip.lines[1], L.UI_CUSTOM_NAME_SIZE_DESC)
+        equal(ctx.env.GameTooltip.lines[2], L.UI_REQUIRES_NAME_SIZE)
+        slider:SetValue(19)
+        ctx:click(L.UI_CUSTOM_NAME_SIZE)
+        equal(slider.alpha, 1)
+        equal(ctx.addon.GetOptions().nameSize, 19)
+        equal(ctx.addon.GetOptions().subtitleSize, 12)
+        assert(ctx.addon.BuildReport():find(string.format(L.STATUS_NAME_SIZE, L.VALUE_YES, 19), 1, true))
+    end
 end)
 
 print(string.format("%d/%d integration checks passed", passed, tests))
