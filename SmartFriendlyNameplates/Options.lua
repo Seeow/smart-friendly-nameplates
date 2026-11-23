@@ -5,6 +5,7 @@ local TITLE = "Smart Friendly Nameplates"
 local panel, category, content, scroll, state, ruleSummary, metricsState
 local checks, rows = {}, {}
 local sliders = {}
+local distanceRows, restoreDistances = {}, nil
 local subtitleColor, colorPickerSession
 local buttonRow
 local globalProfile, profileState
@@ -111,6 +112,32 @@ local function Slider(key, title, minimum, maximum, step, applies, description, 
     row.value:SetPoint("BOTTOM", slider, "TOP", 0, 3)
     RowHover(row, slider)
     sliders[#sliders + 1] = row
+end
+
+local function DistanceSlider(name, title, description)
+    local row = SettingRow(title, description .. "\n" .. name)
+    local label = row.frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    label:SetJustifyH("LEFT")
+    label:SetText(title)
+    local slider = CreateFrame("Slider", nil, row.frame, "OptionsSliderTemplate")
+    slider:SetMinMaxValues(1, 100)
+    slider:SetValueStep(1)
+    slider:SetObeyStepOnDrag(true)
+    if slider.Low then slider.Low:SetText("1") end
+    if slider.High then slider.High:SetText("100") end
+    if slider.Text then slider.Text:SetText("") end
+    slider:SetScript("OnValueChanged", function(_, value)
+        if refreshing then return end
+        local rounded = math.floor(value + 0.5)
+        if rounded >= 1 and rounded <= 100 then addon.SetDistanceCVar(name, rounded)
+        else addon.RefreshOptions() end
+    end)
+    row.slider, row.label, row.cvar = slider, label, name
+    row.value = row.frame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    row.value:SetPoint("BOTTOM", slider, "TOP", 0, 3)
+    RowHover(row, slider)
+    row.status = Text("GameFontHighlightSmall", "", 40, 8)
+    distanceRows[#distanceRows + 1] = row
 end
 
 local function SubtitleColor(applies)
@@ -285,6 +312,31 @@ function addon.RefreshOptions()
         row.slider:SetAlpha(alpha)
         row.value:SetAlpha(alpha)
     end
+    for _, row in ipairs(distanceRows) do
+        local distance = addon.GetDistanceState(row.cvar)
+        local value = distance.value
+        -- Display existing values outside the test range without changing them.
+        local minimum = value and math.min(1, math.floor(value)) or 1
+        local maximum = value and math.max(100, math.ceil(value)) or 100
+        row.slider:SetMinMaxValues(minimum, maximum)
+        if row.slider.Low then row.slider.Low:SetText(tostring(minimum)) end
+        if row.slider.High then row.slider.High:SetText(tostring(maximum)) end
+        row.slider:SetValue(value or minimum)
+        row.value:SetText(value and string.format(L.UI_DISTANCE_VALUE, value) or L.VALUE_UNAVAILABLE)
+        row.slider:SetEnabled(distance.canEdit)
+        local alpha = distance.canEdit and 1 or 0.5
+        row.label:SetAlpha(alpha)
+        row.slider:SetAlpha(alpha)
+        row.value:SetAlpha(alpha)
+        local status = distance.status
+        if status == "limited" then
+            row.status:SetText(string.format(L.UI_DISTANCE_LIMITED, distance.requested, value))
+        elseif status == "combat" then row.status:SetText(L.UI_DISTANCE_COMBAT)
+        elseif status == "unavailable" then row.status:SetText(L.UI_DISTANCE_UNAVAILABLE)
+        elseif status == "error" then row.status:SetText(L.UI_DISTANCE_ERROR)
+        else row.status:SetText(L.UI_DISTANCE_STORED) end
+    end
+    if restoreDistances then restoreDistances:SetEnabled(addon.CanRestoreDistanceCVars()) end
     for _, row in ipairs(rows) do
         if row.check then
             local active = not row.applies or row.applies(options)
@@ -452,6 +504,12 @@ function addon.RegisterOptions()
     Slider("subtitleSize", L.UI_SUBTITLE_SIZE, 8, 24, 1, Subtitles)
     Slider("subtitleOffset", L.UI_SUBTITLE_OFFSET, 0, 12, 1, Subtitles)
     SubtitleColor(Subtitles)
+    Section(L.UI_SECTION_DISTANCE)
+    Text("GameFontHighlightSmall", L.UI_DISTANCE_HELP)
+    DistanceSlider("nameplateMaxDistance", L.UI_DISTANCE_ALL, L.UI_DISTANCE_ALL_DESC)
+    DistanceSlider("nameplatePlayerMaxDistance", L.UI_DISTANCE_PLAYERS, L.UI_DISTANCE_PLAYERS_DESC)
+    Buttons()
+    restoreDistances = Button(L.UI_DISTANCE_RESTORE, 200, addon.RestoreDistanceCVars)
     Section(L.UI_SECTION_DIAGNOSTICS)
     Buttons()
     Button(L.UI_STATUS, 112, function() addon.PrintStatus() end)

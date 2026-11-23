@@ -65,6 +65,10 @@ local updateTime = 0
 local lastError
 local nameHookInstalled = false
 local applyingCVars = false
+local applyingDistanceCVars = false
+local distanceAttempts = {}
+local DISTANCE_CVARS = { "nameplateMaxDistance", "nameplatePlayerMaxDistance" }
+addon.DISTANCE_CVARS = DISTANCE_CVARS
 local cvarProblems = {}
 local groupSnapshot, groupTokens, groupTokenSet, groupTokenKey
 local metricsEnabled = false
@@ -882,6 +886,96 @@ local function RefreshOptions()
     if addon.RefreshOptions then addon.RefreshOptions() end
 end
 
+local function IsDistanceCVar(name)
+    for _, candidate in ipairs(DISTANCE_CVARS) do
+        if name == candidate then return true end
+    end
+    return false
+end
+
+local function DistanceValue(name)
+    local raw, known = GetValue(name)
+    if not known or (type(raw) ~= "string" and type(raw) ~= "number") then return end
+    local value = tonumber(raw)
+    if value and value == value and value >= 0 and value < math.huge then return value, tostring(raw) end
+end
+
+-- Exploratory controls edit the character's live CVars, independently of the
+-- filter and profiles. Loading, reloading and changing profiles never apply a
+-- distance. Keep a separate restoration baseline across /reload for each test.
+function addon.GetDistanceState(name)
+    if not IsDistanceCVar(name) then return { status = "unavailable", canEdit = false } end
+    local value = DistanceValue(name)
+    local attempt = distanceAttempts[name]
+    local status = "ready"
+    if value == nil then status = "unavailable"
+    elseif InCombatLockdown() then status = "combat"
+    elseif attempt and attempt.failed then status = "error"
+    elseif attempt and attempt.requested ~= value then status = "limited" end
+    return { value = value, requested = attempt and attempt.requested,
+        status = status, canEdit = characterDB ~= nil and value ~= nil and not InCombatLockdown() }
+end
+
+local function WriteDistanceValue(name, value)
+    applyingDistanceCVars = true
+    local ok, result = pcall(C_CVar.SetCVar, name, value)
+    applyingDistanceCVars = false
+    local actual, raw = DistanceValue(name)
+    return actual, raw, ok and result ~= false and actual ~= nil
+end
+
+function addon.SetDistanceCVar(name, value)
+    if not characterDB or not IsDistanceCVar(name) or type(value) ~= "number"
+        or value ~= value or value < 1 or value > 100 or value ~= math.floor(value) then return false end
+    if InCombatLockdown() then RefreshOptions(); return false end
+    local current, before = DistanceValue(name)
+    if current == nil then RefreshOptions(); return false end
+    if current == value then distanceAttempts[name] = nil; RefreshOptions(); return true end
+    local originals = characterDB.distanceTestCVars
+    local saved = originals[name]
+    -- A manual change starts a new baseline rather than later undoing it.
+    if type(saved) ~= "table" or saved.applied ~= before then
+        saved = { before = before }
+        originals[name] = saved
+    end
+    local actual, raw, ok = WriteDistanceValue(name, tostring(value))
+    distanceAttempts[name] = { requested = value, actual = raw, failed = not ok }
+    if raw then
+        saved.applied = raw
+        if raw == saved.before then originals[name] = nil end
+    end
+    RefreshOptions()
+    return ok and actual == value
+end
+
+function addon.CanRestoreDistanceCVars()
+    return characterDB ~= nil and next(characterDB.distanceTestCVars) ~= nil and not InCombatLockdown()
+end
+
+function addon.RestoreDistanceCVars()
+    if not addon.CanRestoreDistanceCVars() then RefreshOptions(); return end
+    local originals = characterDB.distanceTestCVars
+    for _, name in ipairs(DISTANCE_CVARS) do
+        local saved = originals[name]
+        if type(saved) == "table" and type(saved.before) == "string" then
+            local current, raw = DistanceValue(name)
+            if current ~= nil then
+                if saved.applied == nil or raw == saved.applied then
+                    local actual, applied, ok = WriteDistanceValue(name, saved.before)
+                    distanceAttempts[name] = { requested = tonumber(saved.before), actual = applied, failed = not ok }
+                    if ok and actual == tonumber(saved.before) then
+                        originals[name], distanceAttempts[name] = nil, nil
+                    elseif applied then saved.applied = applied end
+                else
+                    -- Respect settings changed elsewhere after the last slider edit.
+                    originals[name], distanceAttempts[name] = nil, nil
+                end
+            end
+        elseif saved ~= nil then originals[name] = nil end
+    end
+    RefreshOptions()
+end
+
 -- Keep originals across /reload. /sfn off restores only settings still at the
 -- value we applied, so later manual changes are respected. Never write in combat.
 local function ApplyCVars()
@@ -1163,6 +1257,10 @@ local function Status(emit)
         local value = GetValue(setting.name)
         emit(string.format(L.STATUS_CVAR, setting.name, tostring(value or L.VALUE_UNAVAILABLE)))
     end
+    for _, name in ipairs(DISTANCE_CVARS) do
+        local value = DistanceValue(name)
+        emit(string.format(L.STATUS_CVAR, name, tostring(value or L.VALUE_UNAVAILABLE)))
+    end
     local state, issues = addon.GetHealthState()
     emit(string.format(L.STATUS_HEALTH, L["HEALTH_" .. state:upper()]))
     for _, issue in ipairs(issues) do
@@ -1290,6 +1388,7 @@ driver:SetScript("OnEvent", function(_, event, unit)
             characterDB.nameWidthPercent = nil -- Remove the retired experimental setting.
             FillDefaults(characterDB)
             if type(characterDB.originalCVars) ~= "table" then characterDB.originalCVars = {} end
+            if type(characterDB.distanceTestCVars) ~= "table" then characterDB.distanceTestCVars = {} end
             if characterDB.profileScope ~= "global" then characterDB.profileScope = "character" end
             SmartFriendlyNameplatesGlobalDB = type(SmartFriendlyNameplatesGlobalDB) == "table"
                 and SmartFriendlyNameplatesGlobalDB or {}
@@ -1308,8 +1407,19 @@ driver:SetScript("OnEvent", function(_, event, unit)
         if pendingCVars then ApplyCVars() end
         UpdateAll()
         RefreshOptions()
+    elseif event == "PLAYER_REGEN_DISABLED" then
+        RefreshOptions()
     elseif event == "CVAR_UPDATE" then
-        if applyingCVars or not db then return end
+        if applyingCVars or applyingDistanceCVars or not db then return end
+        for _, name in ipairs(DISTANCE_CVARS) do
+            if name:lower() == tostring(unit):lower() then
+                local _, raw = DistanceValue(name)
+                local attempt = distanceAttempts[name]
+                if attempt and attempt.actual ~= raw then distanceAttempts[name] = nil end
+                RefreshOptions()
+                return
+            end
+        end
         for _, setting in ipairs(CVARS) do
             if setting.name:lower() == tostring(unit):lower() then
                 cvarProblems[setting.name] = nil
@@ -1384,7 +1494,7 @@ driver:SetScript("OnUpdate", function(_, elapsed)
 end)
 
 for _, event in ipairs({
-    "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_ENABLED",
+    "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED",
     "NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED",
     "FORBIDDEN_NAME_PLATE_UNIT_ADDED", "FORBIDDEN_NAME_PLATE_UNIT_REMOVED",
     "GROUP_ROSTER_UPDATE", "UNIT_FLAGS", "UNIT_FACTION", "PLAYER_TARGET_CHANGED",
